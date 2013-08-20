@@ -132,15 +132,23 @@ function millisPerIter() {
   return 1000 * 60 * 60 * 24 * 14;
 }
 
+// Sometimes long iterations crop up (like July when most people take
+// vacation).  So set this to the start time of the last known base:
+//   Iteration 88 started on 12 Aug 2013.
+const kKnownIter = {
+  'num': 88,
+  // Javascript Date() is dumb and the month counts from 0.
+  'start': (new Date(2013, 7, 12, 0, 0, 0, 0)).getTime(),
+};
+
 function iterToTime(iter) {
-  var i37Begin = (new Date(2011, 7, 22, 0, 0, 0, 0)).getTime();
-  return Math.floor(i37Begin + (millisPerIter() * (iter - 37)));
+  return Math.floor(kKnownIter['start'] +
+                    (millisPerIter() * (iter - kKnownIter['num'])));
 }
 
 function getIter() {
-  var i37Begin = (new Date(2011, 7, 22, 0, 0, 0, 0)).getTime();
-  var iter = 37 + (Date.now() - i37Begin) / millisPerIter();
-  return Math.floor(iter);
+  return Math.floor(kKnownIter['num'] +
+                    (Date.now() - kKnownIter['start']) / millisPerIter());
 }
 
 /*
