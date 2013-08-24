@@ -6,19 +6,19 @@ var animationFrames = 36;
 var animationSpeed = 10; // ms
 var canvas;
 var canvasContext;
-var treeOpenImage;
-var treeClosedImage;
-var treeNeitherImage;
-var pollIntervalMin = 1000 * 60;  // 1 minute
-var pollIntervalMax = 1000 * 60 * 60;  // 1 hour
+var image_cache = {};
+const pollIntervalMin = 1000 * 60;  // 1 minute
+const pollIntervalMax = 1000 * 60 * 60;  // 1 hour
 var requestFailureCount = 0;  // used for exponential backoff
-var requestTimeout = 1000 * 2;  // 5 seconds
+const requestTimeout = 1000 * 2;  // 5 seconds
 var rotation = 0;
-var treeStatus = -1;
 var loadingAnimation = null;
 // Debug code
 // loadingAnimation = new LoadingAnimation();
-var statusTimeoutId = null;
+
+function log(msg, obj) {
+  console.log(new Date() + '\n' + msg, obj);
+}
 
 function getChromeBuildUrl() {
   var url = "http://chromiumos-status.appspot.com/current";
@@ -78,30 +78,32 @@ LoadingAnimation.prototype.stop = function() {
   chrome.browserAction.setBadgeText({ text: '' });
 }
 
-function init() {
-  canvas = document.getElementById('canvas');
-  treeOpenImage = document.getElementById('tree_open');
-  treeClosedImage = document.getElementById('tree_closed');
-  treeNeitherImage = document.getElementById('tree_neither');
+window.onload = function() {
+  canvas = document.createElement('canvas');
+  canvas.width = canvas.height = 19;
   canvasContext = canvas.getContext('2d');
 
-  chrome.browserAction.setBadgeBackgroundColor({color:[208, 0, 24, 255]});
-  chrome.browserAction.setIcon({path: "tree_is_unknown.png"});
-
+  showTreeStatus(localStorage.treeStatus);
   startRequest();
 }
 
+chrome.alarms.onAlarm.addListener(function(alarm) {
+  log('alarm ' + alarm.name + ' fired');
+  startRequest();
+});
+
 function scheduleRequest() {
-  var randomness = Math.random() * 2;
   var exponent = Math.pow(2, requestFailureCount);
-  var delay = Math.min(randomness * pollIntervalMin * exponent,
+  // Make sure we keep this to a min.  If Math.random() returns a small
+  // enough value, it might end up rescheduling immediately.
+  var delay = Math.min(pollIntervalMin + (Math.random() * pollIntervalMin * exponent),
                        pollIntervalMax);
   delay = Math.round(delay);
 
-  if (statusTimeoutId != null) {
-    window.clearTimeout(statusTimeoutId);
-  }
-  statusTimeoutId = window.setTimeout(startRequest, delay);
+  log('scheduled next refresh ' + delay / 1000.0 + ' secs from now');
+  chrome.alarms.create('tree poller', {
+    'when': Date.now() + delay
+  });
 }
 
 // ajax stuff
@@ -119,7 +121,7 @@ function startRequest() {
     function() {
       if (loadingAnimation)
         loadingAnimation.stop();
-      showTreeUnknown();
+      showTreeStatus();
       scheduleRequest();
     }
   );
@@ -185,8 +187,8 @@ function getTreeState(onSuccess, onError) {
 function updateTreeStatus(tstatus, message) {
   chrome.browserAction.setTitle({ 'title': message });
   /* chrome.browserAction.setBadgeText({text: message}); */
-  if (treeStatus != tstatus) {
-    treeStatus = tstatus;
+  if (localStorage.treeStatus != tstatus) {
+    localStorage.treeStatus = tstatus;
     animateFlip();
   }
 }
@@ -205,40 +207,55 @@ function animateFlip() {
   } else {
     rotation = 0;
     drawIconAtRotation();
-    if (treeStatus == "open") {
-      chrome.browserAction.setBadgeBackgroundColor({color:[0, 208, 24, 255]});
-    } else if (treeStatus == "closed") {
-      chrome.browserAction.setBadgeBackgroundColor({color:[208, 0, 24, 255]});
-    } else {
-      chrome.browserAction.setBadgeBackgroundColor({color:[208, 208, 24, 255]});
-    }
-
+    showTreeStatus(localStorage.treeStatus);
   }
 }
 
-function showTreeUnknown() {
-  treeStatus = "";
-  chrome.browserAction.setIcon({path:"tree_is_unknown.png"});
-  chrome.browserAction.setBadgeBackgroundColor({color:[190, 190, 190, 230]});
-  chrome.browserAction.setTitle({ 'title': "Tree status is unknown" });
+function showTreeStatus(status) {
+  log('setting status to', status);
+  switch (status) {
+  case 'open':
+    chrome.browserAction.setBadgeBackgroundColor({color:[0, 208, 24, 255]});
+    break;
+  case 'closed':
+    chrome.browserAction.setBadgeBackgroundColor({color:[208, 0, 24, 255]});
+    break;
+  case 'neither':
+    chrome.browserAction.setBadgeBackgroundColor({color:[208, 208, 24, 255]});
+    break;
+  default:
+    status = 'unknown';
+    localStorage.treeStatus = '';
+    chrome.browserAction.setBadgeBackgroundColor({color:[190, 190, 190, 230]});
+    chrome.browserAction.setTitle({ 'title': "Tree status is unknown" });
+    break;
+  }
+  // We need to set the final icon back to an external file.  This way when the
+  // background page is automatically destroyed, the icon doesn't get blanked.
+  chrome.browserAction.setIcon({path: 'tree_is_' + status + '.png'});
 }
 
 function drawIconAtRotation() {
-  var img;
-  if (treeStatus == "open") {
-    img = treeOpenImage;
-  } else if (treeStatus == "closed") {
-    img = treeClosedImage;
-  } else {
-    img = treeNeitherImage;
+  var key = localStorage.treeStatus;
+  switch (key) {
+  case 'open':
+  case 'close':
+    break;
+  default:
+    key = 'neither';
   }
+  if (!(key in image_cache)) {
+    var img = image_cache[key] = new Image();
+    img.src = 'tree_is_' + key + '.png';
+  }
+
   canvasContext.save();
   canvasContext.clearRect(0, 0, canvas.width, canvas.height);
   canvasContext.translate(
       Math.ceil(canvas.width/2),
       Math.ceil(canvas.height/2));
   canvasContext.rotate(2*Math.PI*ease(rotation));
-  canvasContext.drawImage(img,
+  canvasContext.drawImage(image_cache[key],
       -Math.ceil(canvas.width/2),
       -Math.ceil(canvas.height/2));
   canvasContext.restore();
@@ -271,5 +288,3 @@ chrome.browserAction.onClicked.addListener(function(tab) {
   goToWaterfall();
   startRequest();
 });
-
-window.onload = init;
