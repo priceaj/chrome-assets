@@ -25,7 +25,9 @@ window.onload = function() {
 };
 
 function init() {
+  customStatusTextbox.placeholder = default_status_url;
   customStatusTextbox.value = localStorage.customStatus || "";
+  customWaterfallTextbox.placeholder = default_waterfall_url;
   customWaterfallTextbox.value = localStorage.customWaterfall || "";
   onClickBehaviorCheckbox.checked = localStorage.onClickBehavior != "reuse";
   markClean();
@@ -37,8 +39,6 @@ function save() {
   localStorage.onClickBehavior =
     onClickBehaviorCheckbox.checked ? "newtab" : "reuse";
   markClean();
-
-  chrome.extension.getBackgroundPage().init();
 }
 
 function markDirty() {

@@ -29,15 +29,15 @@ function log(msg, obj) {
   console.log(new Date() + '\n' + msg, obj);
 }
 
-function getChromeBuildUrl() {
-  var url = "http://chromiumos-status.appspot.com/current";
+function getStatusUrl() {
+  var url = default_status_url;
   if (localStorage.customStatus)
     url = localStorage.customStatus;
   return url + "?format=json";
 }
 
 function waterfallUrl() {
-  url = "http://build.chromium.org/p/chromiumos/waterfall";
+  var url = default_waterfall_url;
   if (localStorage.customWaterfall)
     url = localStorage.customWaterfall;
   return url;
@@ -184,7 +184,7 @@ function getTreeState(onSuccess, onError) {
       handleError();
     }
 
-    xhr.open("GET", getChromeBuildUrl(), true);
+    xhr.open("GET", getStatusUrl(), true);
     xhr.send(null);
   } catch(e) {
     console.error(chrome.i18n.getMessage("chromebuildcheck_exception", e));
