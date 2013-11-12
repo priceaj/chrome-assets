@@ -130,8 +130,21 @@ function startRequest() {
     function() {
       if (loadingAnimation)
         loadingAnimation.stop();
-      showTreeStatus();
-      scheduleRequest();
+
+      // If we failed, maybe it was because we lack permission.  Check it,
+      // and if that's the case, pop open the options page.  It'll show a
+      // status message telling the user to approve.
+      var origins_url = originsUrl(getStatusUrl());
+      chrome.permissions.contains({
+        origins: [origins_url]
+      }, function(granted) {
+        if (granted) {
+          showTreeStatus();
+          scheduleRequest();
+        } else {
+          chrome.tabs.create({url: chrome.extension.getURL('options.html')});
+        }
+      });
     }
   );
 }

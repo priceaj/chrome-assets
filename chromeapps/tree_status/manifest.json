@@ -17,9 +17,11 @@
   "options_page": "options.html",
   "permissions": [
     "alarms",
-    "tabs",
-    "http://chromiumos-status.appspot.com/",
-    "http://build.chromium.org/"
-   ],
-  "version": "4.1"
+    "tabs"
+  ],
+  "optional_permissions": [
+    "http://*/",
+    "https://*/"
+  ],
+  "version": "4.2"
 }

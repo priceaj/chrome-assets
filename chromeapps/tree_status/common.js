@@ -4,3 +4,9 @@
 
 var default_status_url = 'http://chromiumos-status.appspot.com/current';
 var default_waterfall_url = 'http://build.chromium.org/p/chromiumos/waterfall';
+
+// Normalize the full URL to the base which is what chrome.permissions expects.
+// e.g. The form http://foo/current becomes http://foo/*
+function originsUrl(url) {
+  return url.split(/\//).slice(0, 3).join('/') + '/*';
+}
