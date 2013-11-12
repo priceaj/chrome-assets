@@ -7,6 +7,15 @@ var animationSpeed = 10; // ms
 var canvas;
 var canvasContext;
 var image_cache = {};
+var color_index = {
+    // This is kept in sync with the status site.
+    // http://src.chromium.org/viewvc/chrome/trunk/tools/chromium-status/stylesheets/style.css
+    // Also make sure that there is a corresponding tree_is_xxx.png icon.
+    'closed':      '#E98080',
+    'maintenance': '#FF80FF',
+    'open':        '#8FDF5F',
+    'throttled':   '#FFFC6C'
+};
 const pollIntervalMin = 1000 * 60;  // 1 minute
 const pollIntervalMax = 1000 * 60 * 60;  // 1 hour
 var requestFailureCount = 0;  // used for exponential backoff
@@ -213,22 +222,13 @@ function animateFlip() {
 
 function showTreeStatus(status) {
   log('setting status to', status);
-  switch (status) {
-  case 'open':
-    chrome.browserAction.setBadgeBackgroundColor({color:[0, 208, 24, 255]});
-    break;
-  case 'closed':
-    chrome.browserAction.setBadgeBackgroundColor({color:[208, 0, 24, 255]});
-    break;
-  case 'neither':
-    chrome.browserAction.setBadgeBackgroundColor({color:[208, 208, 24, 255]});
-    break;
-  default:
+  if (status in color_index) {
+    chrome.browserAction.setBadgeBackgroundColor({color: color_index[status]});
+  } else {
     status = 'unknown';
     localStorage.treeStatus = '';
     chrome.browserAction.setBadgeBackgroundColor({color:[190, 190, 190, 230]});
     chrome.browserAction.setTitle({ 'title': "Tree status is unknown" });
-    break;
   }
   // We need to set the final icon back to an external file.  This way when the
   // background page is automatically destroyed, the icon doesn't get blanked.
@@ -237,13 +237,8 @@ function showTreeStatus(status) {
 
 function drawIconAtRotation() {
   var key = localStorage.treeStatus;
-  switch (key) {
-  case 'open':
-  case 'close':
-    break;
-  default:
-    key = 'neither';
-  }
+  if (!(key in color_index))
+    key = 'unknown';
   if (!(key in image_cache)) {
     var img = image_cache[key] = new Image();
     img.src = 'tree_is_' + key + '.png';
