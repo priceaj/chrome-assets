@@ -142,7 +142,14 @@ function startRequest() {
           showTreeStatus();
           scheduleRequest();
         } else {
-          chrome.tabs.create({url: chrome.extension.getURL('options.html')});
+          // Work around http://crbug.com/125706.
+          chrome.permissions.request({
+            origins: [origins_url]
+          }, function(granted) {
+            if (!granted && !chrome.runtime.lastError) {
+              goToUrl(chrome.extension.getURL('options.html'));
+            }
+          });
         }
       });
     }
@@ -272,6 +279,18 @@ function drawIconAtRotation() {
       canvas.width,canvas.height)});
 }
 
+function goToUrl(url) {
+  chrome.tabs.getAllInWindow(undefined, function(tabs) {
+    for (var i = 0, tab; tab = tabs[i]; i++) {
+      if (tab.url && tab.url == url) {
+        chrome.tabs.update(tab.id, {url: tab.url, selected: true}, null);
+        return;
+      }
+    }
+    chrome.tabs.create({url: url});
+  });
+}
+
 function goToWaterfall() {
   var wurl = waterfallUrl();
 
@@ -280,15 +299,7 @@ function goToWaterfall() {
     return;
   }
 
-  chrome.tabs.getAllInWindow(undefined, function(tabs) {
-    for (var i = 0, tab; tab = tabs[i]; i++) {
-      if (tab.url && tab.url == wurl) {
-        chrome.tabs.update(tab.id, {url: tab.url, selected: true}, null);
-        return;
-      }
-    }
-    chrome.tabs.create({url: wurl});
-  });
+  goToUrl(wurl);
 }
 
 // Called when the user clicks on the browser action.
