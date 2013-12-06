@@ -13,7 +13,8 @@
       "voice_data_hmm_it-IT.js",
       "tts_controller.js",
       "tts_main.js"
-    ]
+    ],
+    "persistent": false
   },
   "permissions": [
     "ttsEngine",
