@@ -11,6 +11,7 @@ const ASN1_SEQUENCE = 0x30;
 const ASN1_SET = 0x31;
 const ASN1_OBJECT_ID = 0x6;
 const ASN1_PRINTABLE = 0x13;
+const ASN1_UTF8STRING = 0xc;
 
 /**
  * Namespace for ASN.1 functions.
@@ -92,6 +93,14 @@ asn1.parseAsn1 = function(bytes) {
           string += String.fromCharCode(bytes[offset + prefix_length + i]);
         }
         result.push(string);
+        break;
+      case ASN1_UTF8STRING:
+        var string = '';
+        for (var i = 0; i < len; ++i) {
+          var hex = bytes[offset + prefix_length + i].toString(16);
+          string += '%' + (hex.length < 2 ? '0' + hex : hex);
+        }
+        result.push(decodeURIComponent(string));
         break;
     }
     offset += prefix_length + len;
