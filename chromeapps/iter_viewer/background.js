@@ -132,13 +132,12 @@ function millisPerIter() {
   return 1000 * 60 * 60 * 24 * 14;
 }
 
-// Sometimes long iterations crop up (like July when most people take
-// vacation).  So set this to the start time of the last known base:
-//   Iteration 88 started on 12 Aug 2013.
+// Sometimes long iterations crop up (like December when most people take
+// vacation).  So set this to the start time of the last known base.
+//   Iteration 97 started on 6 Jan 2014.
 const kKnownIter = {
-  'num': 88,
-  // Javascript Date() is dumb and the month counts from 0.
-  'start': (new Date(2013, 7, 12, 0, 0, 0, 0)).getTime(),
+  'num': 97,
+  'start': (new Date("06 Jan 2014")).getTime()
 };
 
 function iterToTime(iter) {
@@ -157,7 +156,7 @@ function getIter() {
 
 function setIcon(tabId) {
   updateCanvas();
-  var canvas = document.getElementById('canvas')
+  var canvas = document.getElementById('canvas');
   var ctx = canvas.getContext('2d');
   var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   chrome.pageAction.setIcon({'tabId':tabId, 'imageData':imageData});
