@@ -18,22 +18,22 @@
  * The current code has been reworked to use the new event system:
  *  - listen to chrome.webNavigation.onCommitted
  *  - use chrome.alarms to update active tabs
- *  - no global state
+ *  - global state is saved in chrome.storage.local
  * This allows us to use URL filters which Chrome itself processes so we
  * never get called on tabs we don't care about.  It also allows Chrome to
  * shutdown the background state page after some time and free up resources.
- * The downside is that we no longer can rely on global state, and we don't
- * have an event to rely on when the tab is closed.
+ * For global state that we care about, we keep it in chrome.storage.local
+ * and sync it as needed.
  */
 
 /*
  * Current codeflow
  *
  * First we listen for new tabs with a URL filter.  This way we can assume
- * when we get called, we always want to generate the tab.
+ * when we get called, we always want to generate the icon for this tab.
  *
- * Then we set an alarm to fire just after the iteration starts.  Since we
- * don't have global state, we have to pack the tabId into the name of the
+ * Then we set an alarm to fire just after the current iteration ends.  Since
+ * we don't have global state, we have to pack the tabId into the name of the
  * alarm itself.  Then when the alarm fires, we unpack the tabId and update
  * its icon.
  *
@@ -44,10 +44,18 @@
  * by setting an alarm that runs "soon" after a new tab has been created that
  * cleans up all old alarms.  This should provide "good enough" coverage.
  *
+ * Since we fetch the iteration data from the internet, that logic looks like:
+ * - Load last cached data from chrome.storage into runtime globals.
+ * - If data is available, draw the icon.
+ * - Check to see if the data is stale and refresh from network as needed.
+ * - If data is available, draw the icon.
+ *
  * Note: There is a bug where the icon doesn't get set when a page that
  * gets instant loaded in the bg when the current page is the NTP.  See
  * http://crbug.com/168630
  */
+
+var storage = chrome.storage.local;
 
 /*
  * Main event / alarm logic.
@@ -64,25 +72,29 @@ function alarmNameToTabId(alarmName) {
 
 // When visiting a tracker page, show the icon.
 chrome.webNavigation.onCommitted.addListener(function(e) {
-  // Set an alarm to update icon when the iteration changes.
-  chrome.alarms.create(tabIdToAlarmName(e.tabId), {
-    'when': iterToTime(getIter() + 1),
-    'periodInMinutes': millisPerIter() / 1000 / 60
-  });
+  syncIterState(function() {
+    // Set an alarm to update icon when the iteration changes.
+    chrome.alarms.create(tabIdToAlarmName(e.tabId), {
+      'when': iterState.end,
+      'periodInMinutes': millisPerIter() / 1000 / 60
+    });
 
-  /*
-   * Set the reaper alarm to run once in the near future.  Yes, this will reset
-   * a previous reaper alarm, but that's OK.  This isn't super important.
-   */
-  chrome.alarms.create('reaper', {
-    'delayInMinutes': 10
-  });
+    /*
+     * Set the reaper alarm to run once in the near future.  Yes, this will
+     * reset a previous reaper alarm, but that's OK.  This isn't super
+     * important to run all the time.
+     */
+    chrome.alarms.create('reaper', {
+      'delayInMinutes': 10
+    });
 
-  setIcon(e.tabId);
+    setIcon(e.tabId);
+  });
 }, {url: [{hostEquals: 'code.google.com',
            pathPrefix: '/p/'},
           {hostEquals: 'thebugsof.googleplex.com'}]});
 
+// Called when we need to update the iteration, or clean up old alarms.
 chrome.alarms.onAlarm.addListener(function(alarm) {
   var tabId = alarmNameToTabId(alarm.name);
   if (isNaN(tabId)) {
@@ -118,7 +130,7 @@ chrome.alarms.onAlarm.addListener(function(alarm) {
       console.log('OK to ignore previous error related to tab ' + tabId);
       chrome.alarms.clear(alarm.name);
     } else {
-      setIcon(tabId);
+      updateIterData(function() { setIcon(tabId); });
     }
   });
 });
@@ -127,27 +139,141 @@ chrome.alarms.onAlarm.addListener(function(alarm) {
  * Iteration/time code.
  */
 
-function millisPerIter() {
-  // Iterations last 14 days.
-  return 1000 * 60 * 60 * 24 * 14;
-}
-
-// Sometimes long iterations crop up (like December when most people take
-// vacation).  So set this to the start time of the last known base.
-//   Iteration 97 started on 6 Jan 2014.
-const kKnownIter = {
-  'num': 97,
-  'start': (new Date("06 Jan 2014")).getTime()
+// If the network has not yet been synced, use this value.
+// A current one can be found at:
+const kCurrentIterUrl = 'http://chromepmo.appspot.com/schedule/iteration/json';
+var iterState = {
+  'start': (new Date('06 Jan 2014')).getTime(),
+  'end': 0,
+  'iteration': 97,
+  'lastsync': 0,
 };
 
-function iterToTime(iter) {
-  return Math.floor(kKnownIter['start'] +
-                    (millisPerIter() * (iter - kKnownIter['num'])));
+// Fetch |url| and call |callback| with the response text.
+function fetchUrl(url, callback) {
+  var xhr = new XMLHttpRequest();
+  try {
+    xhr.onreadystatechange = function() {
+      if (xhr.readyState != 4)
+        return;
+
+      if (xhr.responseText)
+        callback(xhr.responseText);
+    }
+
+    xhr.open('GET', url, true);
+    xhr.send(null);
+  } catch (e) {
+    console.error(url + '\nfetching failed', e);
+  }
+}
+
+// Grab the current iteration details from the server.
+function updateIterData(callback) {
+  var url = kCurrentIterUrl;
+
+  function readResponse(responseText) {
+    var resp;
+    try {
+      resp = JSON.parse(responseText);
+    } catch (e) {
+      console.error(url + '\nparsing response failed\n' + responseText, e);
+    }
+
+    if ('start' in resp && 'end' in resp && 'iteration' in resp) {
+      // The dates we get from the server are in UTC and align to midnight.
+      // But the intention is not to have everyone in the world line up to
+      // UTC.  From the Chrome PMO list:
+      // ------------------------------------------------------------------
+      // My guidance would be to ignore the timezone offset, it's more
+      // important to have a relatively consistent timebox than it is to
+      // stop work at an explicit time (i.e. I'd like a relatively normal
+      // two weeks for everyone, it's more fair for the sake of measurement
+      // and reporting, than to have cut offs that happen at odd points in
+      // people's work days).
+      // ------------------------------------------------------------------
+      // So suck up the date and normalize it to the local timezone.
+      function localizeUTCDate(utc_date) {
+        var d = new Date(utc_date);
+        return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+      }
+      iterState = {
+        'start': localizeUTCDate(resp.start).getTime(),
+        'end': localizeUTCDate(resp.end).getTime(),
+        'iteration': resp.iteration,
+        'lastsync': Date.now(),
+      };
+      // The response tells us the start of the last day of the iteration
+      // rather than the time it ends.  e.g. We get back the date:
+      //   Sun 19 Jan 2014 00:00:00
+      // That means all of Sunday is part of this iteration.
+      iterState.end += kMillisPerDay;
+      storage.set(iterState);
+      callback();
+      return;
+    } else {
+      console.error(url + '\njson is incomplete\n', responseText);
+    }
+  }
+  fetchUrl(url, readResponse);
+}
+
+// Make sure our iter data is synced from storage and up-to-date.
+function syncIterState(callback) {
+  if (callback === undefined)
+    callback = function(){};
+
+  var keys = ['start', 'end', 'iteration', 'lastsync'];
+  storage.get(keys, function (items) {
+    // Storage might not have all keys, so only sync what we get back.
+    keys.forEach(function (key) {
+      if (key in items)
+        iterState[key] = items[key];
+    });
+
+    var now = Date.now();
+
+    // Draw the icon fast using current data as it'll usually be right.
+    if (now >= iterState.start && now < iterState.end)
+      callback();
+
+    // See if we need to fetch an update.  Do it at least once a day.
+    if (iterState.end <= now ||
+        iterState.lastsync + kMillisPerDay < now) {
+      updateIterData(callback);
+    }
+  });
+}
+
+const kMillisPerDay = 1000 * 60 * 60 * 24;
+
+function millisPerIter() {
+  // Iterations usually last 2 weeks.
+  return kMillisPerDay * 7 * 2;
 }
 
 function getIter() {
-  return Math.floor(kKnownIter['num'] +
-                    (Date.now() - kKnownIter['start']) / millisPerIter());
+  var now = Date.now();
+  // If our current data is viable, use it.  Else make a guess.
+  if (now >= iterState.start && now < iterState.end)
+    return iterState.iteration;
+  else
+    return Math.floor(iterState.iteration,
+                      (now - iterState.start) / millisPerIter());
+}
+
+function millisToDateString(msecs) {
+  return (new Date(msecs)).toDateString();
+}
+
+function iterSummary() {
+  // This might return stale data, but it won't be wrong data.
+  // Not a big deal as it should be rare that it's stale.
+  return 'Chromium Iteration ' + iterState.iteration + '\n' +
+         'First: ' + millisToDateString(iterState.start) + '\n' +
+         'Last: ' + millisToDateString(iterState.end - kMillisPerDay) + '\n' +
+         'Duration: ' + ((iterState.end - iterState.start) / kMillisPerDay) +
+                    ' days';
 }
 
 /*
@@ -160,6 +286,7 @@ function setIcon(tabId) {
   var ctx = canvas.getContext('2d');
   var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   chrome.pageAction.setIcon({'tabId':tabId, 'imageData':imageData});
+  chrome.pageAction.setTitle({'tabId':tabId, 'title':iterSummary()});
   chrome.pageAction.show(tabId);
 }
 
