@@ -34,21 +34,6 @@
  * @param {Object} delegate The object to inform of events.
  */
 var TtsController = function(method, delegate) {
-  if (method) {
-    this.hasSupportedVoicesForMethod = false;
-    for (var i = 0; i < window.voices.length; i++) {
-      if (window.voices[i].method == method) {
-        this.hasSupportedVoicesForMethod = true;
-      }
-    }
-    if (!this.hasSupportedVoicesForMethod) {
-      console.log('No ' + method + ' voices loaded.');
-      return;
-    }
-  } else {
-    this.hasSupportedVoicesForMethod = false;
-  }
-
   this.method = method;
   this.delegate = delegate;
   this.nativeTts = null;
@@ -139,9 +124,6 @@ TtsController.prototype.findBestMatchingVoice = function(
 
 TtsController.prototype.switchVoiceIfNeeded = function(
     voiceName, lang, gender) {
-  if (!this.hasSupportedVoicesForMethod) {
-    return;
-  }
   var voice = null;
   if (voiceName) {
     for (var i = 0; i < window.voices.length; i++) {
@@ -227,7 +209,7 @@ TtsController.prototype.escapePluginArg = function(str) {
 };
 
 TtsController.prototype.onStop = function() {
-  if (!this.initialized || !this.hasSupportedVoicesForMethod) {
+  if (!this.initialized) {
     return;
   }
 
@@ -235,13 +217,9 @@ TtsController.prototype.onStop = function() {
 };
 
 TtsController.prototype.onSpeak = function(utterance, options, utteranceId) {
-  if (!this.hasSupportedVoicesForMethod) {
-    return;
-  }
   if (!this.initialized) {
     console.error('Error: TtsController for method=' + this.method +
                   ' is not initialized.');
-    return;
   }
 
   this.nativeTts.postMessage('stop');
@@ -323,7 +301,6 @@ TtsController.prototype.handleMessage = function(message_event) {
     var id = data.substr(4);
     console.log('Got end event for utterance: ' + id);
     this.sendResponse(id, 'end');
-    this.setIdleTimeout();
   } else if (data == 'error') {
     console.log('error');
   } else if (data == 'idle' && !this.initialized) {
@@ -381,9 +358,6 @@ TtsController.prototype.load = function() {
 };
 
 TtsController.prototype.unload = function() {
-  if (!this.initialized || !this.hasSupportedVoicesForMethod) {
-    return;
-  }
   this.nativeTts.postMessage('stopService');
 };
 

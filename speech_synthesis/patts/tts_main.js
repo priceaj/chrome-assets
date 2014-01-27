@@ -24,12 +24,15 @@ var TtsMain = function() {
   this.lang = '';
   this.voiceName = '';
   this.pendingSpeechRequest = null;
-  this.startedLoading = false;
 };
 
 TtsMain.prototype.run = function() {
-  chrome.ttsEngine.onSpeak.addListener(this.onSpeak.bind(this));
-  chrome.ttsEngine.onStop.addListener(this.onStop.bind(this));
+  document.addEventListener('unload', this.unload, false);
+  this.getVoiceNamesFromManifest(function() {
+    this.loadControllers();
+    chrome.ttsEngine.onSpeak.addListener(this.onSpeak.bind(this));
+    chrome.ttsEngine.onStop.addListener(this.onStop.bind(this));
+  });
 };
 
 TtsMain.prototype.getVoiceNamesFromManifest = function(completion) {
@@ -54,12 +57,8 @@ TtsMain.prototype.getVoiceNamesFromManifest = function(completion) {
 };
 
 TtsMain.prototype.loadControllers = function() {
-  this.startedLoading = true;
-  this.getVoiceNamesFromManifest(function() {
-    this.hmmController = new TtsController('hmm', this);
-    this.uselController = new TtsController('usel', this);
-    document.addEventListener('unload', this.unload, false);
-  });
+  this.hmmController = new TtsController('hmm', this);
+//  this.uselController = new TtsController('usel', this);
 };
 
 /**
@@ -77,6 +76,8 @@ TtsMain.prototype.onResponse = function(utteranceId, response) {
     return;
   }
 
+  console.log('onResponse type=' + response.type + ' utteranceId=' + utteranceId);
+
   this.callback(response);
   var type = response.type;
   if (type == 'end' || type == 'interrupted' ||
@@ -88,29 +89,19 @@ TtsMain.prototype.onResponse = function(utteranceId, response) {
 TtsMain.prototype.onStop = function() {
   this.pendingSpeechRequest = null;
   this.callback = null;
-  if (this.startedLoading) {
-    this.hmmController.onStop();
-    this.uselController.onStop();
-  }
+  this.hmmController.onStop();
+//  this.uselController.onStop();
 };
 
 TtsMain.prototype.onSpeak = function(utterance, options, callback) {
   console.log('Will speak: "' + utterance + '" lang="' + options.lang + '"');
 
-  if (this.startedLoading) {
-    this.hmmController.switchVoiceIfNeeded(
-        options.voiceName, options.lang, options.gender);
-    this.uselController.switchVoiceIfNeeded(
-        options.voiceName, options.lang, options.gender);
-  } else {
-    this.loadControllers();
-  }
+  this.hmmController.switchVoiceIfNeeded(
+      options.voiceName, options.lang, options.gender);
+//  this.uselController.switchVoiceIfNeeded(
+//      options.voiceName, options.lang, options.gender);
 
-  var anythingIsInitialized =
-      (this.hmmController && this.hmmController.initialized) ||
-      (this.uselController && this.uselController.initialized);
-
-  if (!anythingIsInitialized) {
+  if (!this.hmmController.initialized) { //  && !this.uselController.initialized) {
     console.log('Nothing is initialized yet.');
     if (this.pendingSpeechRequest) {
       var response = {type: 'cancelled', charIndex: 0};
@@ -124,19 +115,19 @@ TtsMain.prototype.onSpeak = function(utterance, options, callback) {
   }
 
   this.hmmController.onStop();
-  this.uselController.onStop();
+//  this.uselController.onStop();
 
   this.utteranceId++;
   this.callback = callback;
   console.log('SETTING CALLBACK, id=' + this.utteranceId);
 
-  if (this.uselController.initialized) {
-    console.log('Using unit selection');
-    this.currentController = this.uselController;
-  } else {
+//  if (this.uselController.initialized) {
+//    console.log('Using unit selection');
+//    this.currentController = this.uselController;
+//  } else {
     console.log('Using HMM');
-    this.currentController = this.hmmController;
-  }
+    this.currentController = this.hmmController;      
+//  }
 
   this.currentController.onSpeak(utterance, options, this.utteranceId);
 };
@@ -154,7 +145,7 @@ TtsMain.prototype.speakPendingRequest = function() {
 
 TtsMain.prototype.unload = function() {
   this.hmmController.unload();
-  this.uselController.unload();
+//  this.uselController.unload();
 };
 
 var ttsController = new TtsMain();
