@@ -295,7 +295,8 @@ function drawCorner(ctx, cornerX, cornerY, endX, endY) {
   ctx.fillStyle = 'rgba(255, 255, 255, 255)';
   ctx.moveTo(cornerX, cornerY);
   ctx.lineTo(cornerX, endY);
-  ctx.bezierCurveTo(cornerX, endY/3 + cornerY * 2 / 3, endX/3 + cornerX * 2 / 3,
+  ctx.bezierCurveTo(cornerX,
+                    endY / 3 + cornerY * 2 / 3, endX / 3 + cornerX * 2 / 3,
                     cornerY, endX, cornerY);
   ctx.lineTo(cornerX, cornerY);
   ctx.fill();
@@ -317,7 +318,7 @@ function updateCanvas() {
   ctx.fillStyle = '#008000';
   ctx.fillRect(0, topSize, canvas.width, canvas.height - topSize);
 
-  ctx.font = 'bold 11pt Open Sans, sans-serif';
+  ctx.font = 'bold 8pt Open Sans, sans-serif';
   ctx.fillStyle = 'rgb(255, 255, 255)';
   ctx.shadowColor = '#000000';
   ctx.shadowOffsetX = 1;
@@ -326,7 +327,7 @@ function updateCanvas() {
   var iter = getIter();
   var intIter = Math.floor(iter);
   var progress = iter - intIter;
-  ctx.fillText('' + intIter, 2, canvas.height * .8);
+  ctx.fillText('' + intIter, 1, canvas.height * .7, canvas.width);
   ctx.shadowOffsetX = 0;
   ctx.shadowOffsetX = 0;
   ctx.shadowBlur = 0;
