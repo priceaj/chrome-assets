@@ -195,6 +195,11 @@ TtsController.prototype.createNativeTts = function() {
   embed.addEventListener('load', this.load.bind(this), false);
   document.body.appendChild(embed);
   this.nativeTts = embed;
+
+  // Native Client appears to be buggy and only starts load if any property gets
+  // accessed. Do that now by checking for lastError.
+  if (embed.lastError)
+    console.error('Error while loading native module: ' + embed.lastError);
 };
 
 TtsController.prototype.clearTimeouts = function() {
