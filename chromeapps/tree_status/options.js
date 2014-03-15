@@ -40,17 +40,22 @@ function init() {
     if (granted)
       markClean();
     else
-      setStatus('Please hit the save button to grant permission');
+      setStatus('Please hit the save button to grant permission to the ' +
+                'waterfalls', 0);
   });
 }
 
-function setStatus(status) {
+function setStatus(status, timeout) {
   statusText.innerText = status;
   statusText.hidden = false;
 
-  statusText.timeout = setTimeout(function() {
-    statusText.hidden = true;
-  }, 5000);
+  if (timeout === undefined)
+    timeout = 5000;
+
+  if (timeout)
+    statusText.timeout = setTimeout(function() {
+      statusText.hidden = true;
+    }, timeout);
 }
 
 function save() {

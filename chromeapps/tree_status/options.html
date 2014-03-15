@@ -1,76 +1,71 @@
 <html>
 <head>
 <title>Chrome OS Tree Status - Options</title>
-<style>
-body {
-  font-family:helvetica, arial, sans-serif;
-  font-size:80%;
-  margin:10px;
-}
-
-#header {
-  padding-bottom:1.5em;
-  padding-top:1.5em;
-}
-
-#header h1 {
-  font-size: 156%;
-  display:inline;
-  padding-bottom:43px;
-  padding-left:75px;
-  padding-top:40px;
-  background:url(icon_128.png) no-repeat;
-  background-size:67px;
-  background-position:1px 18px;
-}
-
-.section-header {
-  background:#ebeff9;
-  border-top:1px solid #b5c7de;
-  font-size:99%;
-  padding:3px 0 2px 5px;
-  font-weight:bold;
-  margin-bottom:1em;
-}
-
-.section-header.first {
-  margin-top:1em;
-}
-
-#custom-domain {
-  width:300px;
-  margin-left:2px;
-}
-
-#footer {
-  margin-top:4em;
-}
-</style>
+<link rel="stylesheet" type="text/css" href="chrome-bootstrap.css" />
 <script src='common.js'></script>
 <script src='options.js'></script>
 </head>
-<body>
 
-<div id="header"><h1>Chrome OS Tree Status Options</h1></div>
+<body class="chrome-bootstrap">
+  <div class="frame">
 
-<div class="section-header first">Custom URL</div>
-<p>To use the Build Status Checker checker with a different URL than default, enter the domain here.
-<p>
-URL for the Waterfall (url to browse to):  <input type="text" id="custom-waterfall" size="80"><br/>
-URL for the inner frame containing tree status:  <input type="text" id="custom-status" size="80"><br/>
+    <div class="navigation">
+      <h1><a href="#">Tree Status</a></h1>
+      <ul class="menu">
+        <li class="selected">
+          <a href="#options">Options</a>
+        </li>
+      </ul>
+      <ul>
+        <li>&nbsp;<img src='icon_128.png'></li>
+      </ul>
+    </div>
 
-<div class="section-header">Button Behavior</div>
-<p>
-Open a new tab when clicking the icon (otherwise, an existing waterfall tab, if found, will be used):  <input type="checkbox" id="onclick-behavior"><br/>
-</p>
+    <div class="mainview view">
+      <div id="options" class="selected">
+        <header>
+          <h1>Options</h1>
+        </header>
+        <div class="content">
 
-<div id="footer">
+<section>
+ <h3>Custom URL</h3>
+ <div>
+  <div>
+   URL for the Waterfall (url to browse to):
+   <input type="text" id="custom-waterfall" size="80">
+  </div>
+  <br>
+  <div>
+  <label>
+   URL for the inner frame containing tree status:
+   <input type="text" id="custom-status" size="80">
+  </label>
+  </div>
+ </div>
+</section>
+
+<section>
+ <h3>Button Behavior</h3>
+ <label>
+  <input type="checkbox" id="onclick-behavior">
+  <span>Open a new tab when clicking the icon (otherwise, an existing waterfall tab, if found, will be used)</span>
+ </label>
+</section>
+
+<div>
+ <h3>Save Settings</h3>
+ <p>
   <button id="save-button" style="font-weight:bold">Save</button>
   <button id="cancel-button">Cancel</button>
+ </p>
+ <span id="status" hidden></span>
 </div>
 
-<br/>
-<span id="status" hidden></span>
+        </div>
+      </div>
+    </div>
 
+  </div>
 </body>
 </html>
