@@ -67,6 +67,10 @@
       <structure type="txt" name="SELF_REPAIR" file="en/self_repair.txt" />
       <structure type="txt" name="UPDATE_FIRMWARE"
         file="en/update_firmware.txt" />
+      <structure type="txt" name="BLOCK_DEVMODE"
+        file="en/block_devmode.txt" />
+      <structure type="txt" name="BLOCK_DEVMODE_VIRTUAL"
+        file="en/block_devmode_virtual.txt" />
     </structures>
   </release>
 </grit>
