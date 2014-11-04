@@ -39,6 +39,9 @@ files=(
   icon-128x128.png
   background.html
   background.js
+  common.js
+  popup.html
+  popup.js
 )
 zip="${P}.zip"
 zip ${zip} "${files[@]/#/${P}/}"

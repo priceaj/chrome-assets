@@ -204,11 +204,14 @@ function millisToDateString(msecs) {
 function iterSummary() {
   // This might return stale data, but it won't be wrong data.
   // Not a big deal as it should be rare that it's stale.
+  //
+  // We need to round the days in case of daylight transitions
+  // where it might be +/- some hours.
   return 'Chromium Iteration ' + iterState.iteration + '\n' +
          'First: ' + millisToDateString(iterState.start) + '\n' +
          'Last: ' + millisToDateString(iterState.end - kMillisPerDay) + '\n' +
-         'Duration: ' + ((iterState.end - iterState.start) / kMillisPerDay) +
-                    ' days';
+         'Duration: ' + Math.round((iterState.end - iterState.start) /
+                                   kMillisPerDay) + ' days';
 }
 
 /*
