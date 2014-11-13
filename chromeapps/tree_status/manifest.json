@@ -1,6 +1,6 @@
 {
   "manifest_version": 2,
-  "minimum_chrome_version": "27",
+  "minimum_chrome_version": "36",
   "background": {
     "persistent": false,
     "scripts": [ "common.js", "background.js" ]
@@ -11,17 +11,22 @@
   "default_locale": "en",
   "description": "__MSG_chromebuildcheck_description__",
   "icons": {
-    "128": "icon_128.png"
+    "128": "images/icon_128.png"
   },
   "name": "__MSG_chromebuildcheck_name__",
   "options_page": "options.html",
   "permissions": [
     "alarms",
-    "tabs"
+    "notifications",
+    "tabs",
+    "http://chromiumos-status.appspot.com/",
+    "https://chromiumos-status.appspot.com/",
+    "http://build.chromium.org/",
+    "https://build.chromium.org/"
   ],
   "optional_permissions": [
     "http://*/",
     "https://*/"
   ],
-  "version": "4.3"
+  "version": "5.0"
 }

@@ -14,14 +14,17 @@ var color_index = {
     'closed':      '#E98080',
     'maintenance': '#FF80FF',
     'open':        '#8FDF5F',
-    'throttled':   '#FFFC6C'
+    'throttled':   '#FFFC6C',
 };
+// Schedule sheriff updates every hour to deal with timezone shifts.
+const pollSheriff = 1000 * 60 * 60;  // 1 hour
 const pollIntervalMin = 1000 * 60;  // 1 minute
 const pollIntervalMax = 1000 * 60 * 60;  // 1 hour
 var requestFailureCount = 0;  // used for exponential backoff
 const requestTimeout = 1000 * 2;  // 5 seconds
 var rotation = 0;
 var loadingAnimation = null;
+var isSheriff = false;
 // Debug code
 // loadingAnimation = new LoadingAnimation();
 
@@ -34,6 +37,13 @@ function getStatusUrl() {
   if (localStorage.customStatus)
     url = localStorage.customStatus;
   return url + "?format=json";
+}
+
+function getSheriffUrl(sheriff) {
+  var url = waterfallUrl();
+  // Chop the "/waterfall" part off.
+  url = url.substr(0, url.lastIndexOf('/'));
+  return url + "/" + sheriff + ".js";
 }
 
 function waterfallUrl() {
@@ -93,30 +103,46 @@ window.onload = function() {
   canvasContext = canvas.getContext('2d');
 
   showTreeStatus(localStorage.treeStatus);
-  startRequest();
+  chrome.notifications.onClicked.addListener(goToStatusPage);
+  startRequests();
 }
 
 chrome.alarms.onAlarm.addListener(function(alarm) {
   log('alarm ' + alarm.name + ' fired');
-  startRequest();
+  if (alarm.name == 'tree poller')
+    startTreeRequest();
+  else if (alarm.name == 'sheriff poller')
+    startSheriffRequest();
 });
 
-function scheduleRequest() {
+function schedule(type, delay) {
+  log('scheduled next ' + type + 'refresh ' + delay / 1000.0 + ' secs from now');
+  chrome.alarms.create(type + ' poller', {
+    'when': Date.now() + delay
+  });
+}
+
+function scheduleTreeRequest() {
   var exponent = Math.pow(2, requestFailureCount);
   // Make sure we keep this to a min.  If Math.random() returns a small
   // enough value, it might end up rescheduling immediately.
   var delay = Math.min(pollIntervalMin + (Math.random() * pollIntervalMin * exponent),
                        pollIntervalMax);
   delay = Math.round(delay);
+  schedule('tree', delay);
+}
 
-  log('scheduled next refresh ' + delay / 1000.0 + ' secs from now');
-  chrome.alarms.create('tree poller', {
-    'when': Date.now() + delay
-  });
+function scheduleSheriffRequest() {
+  schedule('sheriff', pollSheriff);
 }
 
 // ajax stuff
-function startRequest() {
+function startRequests() {
+  startTreeRequest();
+  startSheriffRequest();
+}
+
+function startTreeRequest() {
   if (loadingAnimation)
     loadingAnimation.start();
 
@@ -125,7 +151,7 @@ function startRequest() {
       if (loadingAnimation)
         loadingAnimation.stop();
       updateTreeStatus(tstatus, message);
-      scheduleRequest();
+      scheduleTreeRequest();
     },
     function() {
       if (loadingAnimation)
@@ -140,7 +166,7 @@ function startRequest() {
       }, function(granted) {
         if (granted) {
           showTreeStatus();
-          scheduleRequest();
+          scheduleTreeRequest();
         } else {
           // Work around http://crbug.com/125706.
           chrome.permissions.request({
@@ -156,17 +182,40 @@ function startRequest() {
   );
 }
 
-function getTreeState(onSuccess, onError) {
+function showSheriffs(enabled) {
+  isSheriff = enabled;
+  if (isSheriff) {
+    chrome.browserAction.setBadgeText({text: '«Ф»'});
+    chrome.browserAction.setBadgeBackgroundColor({color: '#ffc600'});
+  } else {
+    chrome.browserAction.setBadgeText({text: ''});
+  }
+}
+
+function startSheriffRequest() {
+  if (!localStorage.username) {
+    chrome.browserAction.setBadgeText({text: '?!?'});
+    chrome.browserAction.setBadgeBackgroundColor({color: '#000000'});
+    return;
+  }
+  getSheriffs(
+    function(sheriffs) {
+      showSheriffs(sheriffs.indexOf(localStorage.username) != -1);
+    }
+  );
+}
+
+function getUrl(url, onSuccess, onError) {
   var xhr = new XMLHttpRequest();
   var abortTimerId = window.setTimeout(function() {
     xhr.abort();  // synchronously calls onreadystatechange
   }, requestTimeout);
 
-  function handleSuccess(status, message) {
+  function handleSuccess(response) {
     requestFailureCount = 0;
     window.clearTimeout(abortTimerId);
     if (onSuccess)
-      onSuccess(status, message);
+      onSuccess(response);
   }
 
   function handleError() {
@@ -177,48 +226,98 @@ function getTreeState(onSuccess, onError) {
   }
 
   try {
-    xhr.onreadystatechange = function(){
+    xhr.onreadystatechange = function() {
       if (xhr.readyState != 4)
         return;
 
-      if (xhr.responseText) {
-        var resp;
-        try {
-          resp = JSON.parse(xhr.responseText);
-        } catch(ex) {
-          handleError();
-        }
-
-        if (resp.general_state != null && resp.general_state != "") {
-          handleSuccess(resp.general_state, resp.message);
-          return;
-        } else {
-          console.error(chrome.i18n.getMessage("chromebuildlcheck_node_error"));
-        }
-      }
-
-      handleError();
+      if (xhr.responseText)
+        handleSuccess(xhr.responseText);
+      else
+        handleError();
     }
 
     xhr.onerror = function(error) {
       handleError();
     }
 
-    xhr.open("GET", getStatusUrl(), true);
+    xhr.open("GET", url, true);
     xhr.send(null);
-  } catch(e) {
+  } catch (e) {
     console.error(chrome.i18n.getMessage("chromebuildcheck_exception", e));
     handleError();
   }
 }
 
+function getTreeState(onSuccess, onError) {
+  function parseResponse(response) {
+    var resp;
+    try {
+      resp = JSON.parse(response);
+    } catch (ex) {
+      onError();
+    }
+
+    if (resp.general_state != null && resp.general_state != "") {
+      if (onSuccess)
+        onSuccess(resp.general_state, resp.message);
+    } else
+      console.error(chrome.i18n.getMessage("chromebuildlcheck_node_error"));
+  }
+  getUrl(getStatusUrl(), parseResponse, onError);
+}
+
+function getSheriffs(onSuccess, onError) {
+  function checkSheriffs(onSuccess) {
+    var sheriffs = localStorage._sheriffs + "," + localStorage._sheriffs2;
+    if (onSuccess)
+      onSuccess(sheriffs.split(/ *, */));
+  }
+  function parseResponse(response) {
+    // Example content:
+    // document.write('avakulenko, davidriley')
+    var sheriffs = response.replace(/^[^(]*[(]'(.*)'[)]/, '$1');
+    log('found sheriffs', sheriffs);
+    return sheriffs;
+  }
+
+  function parseResponseSheriff(response) {
+    localStorage._sheriffs = parseResponse(response);
+    checkSheriffs(onSuccess);
+  }
+  getUrl(getSheriffUrl('sheriff'), parseResponseSheriff, onError);
+
+  function parseResponseSheriff2(response) {
+    localStorage._sheriffs2 = parseResponse(response);
+    checkSheriffs(onSuccess);
+  }
+  getUrl(getSheriffUrl('sheriff2'), parseResponseSheriff2, onError);
+}
+
+function notifyChange(status, message) {
+  var image_path = 'images/tree_is_' + status + '_128x128.png';
+  var options = {
+    type: 'basic',
+    title: 'Tree is now ' + status + '!',
+    message: message,
+    iconUrl: chrome.extension.getURL(image_path),
+    priority: 0,
+    isClickable: true,
+  };
+  chrome.notifications.clear('chrome waterfall', function(wasCleared) {
+    chrome.notifications.create('chrome waterfall', options, function(){});
+  });
+}
 
 function updateTreeStatus(tstatus, message) {
-  chrome.browserAction.setTitle({ 'title': message });
+  if (!localStorage.username)
+    message += '\n\nPlease set your username in the options page!';
+  chrome.browserAction.setTitle({'title': message});
   /* chrome.browserAction.setBadgeText({text: message}); */
   if (localStorage.treeStatus != tstatus) {
     localStorage.treeStatus = tstatus;
     animateFlip();
+    if (isSheriff && localStorage.notifyBehavior != "none")
+      notifyChange(tstatus, message);
   }
 }
 
@@ -242,17 +341,14 @@ function animateFlip() {
 
 function showTreeStatus(status) {
   log('setting status to', status);
-  if (status in color_index) {
-    chrome.browserAction.setBadgeBackgroundColor({color: color_index[status]});
-  } else {
+  if (!(status in color_index)) {
     status = 'unknown';
     localStorage.treeStatus = '';
-    chrome.browserAction.setBadgeBackgroundColor({color:[190, 190, 190, 230]});
     chrome.browserAction.setTitle({ 'title': "Tree status is unknown" });
   }
   // We need to set the final icon back to an external file.  This way when the
   // background page is automatically destroyed, the icon doesn't get blanked.
-  chrome.browserAction.setIcon({path: 'tree_is_' + status + '.png'});
+  chrome.browserAction.setIcon({path: 'images/tree_is_' + status + '.png'});
 }
 
 function drawIconAtRotation() {
@@ -261,7 +357,7 @@ function drawIconAtRotation() {
     key = 'unknown';
   if (!(key in image_cache)) {
     var img = image_cache[key] = new Image();
-    img.src = 'tree_is_' + key + '.png';
+    img.src = 'images/tree_is_' + key + '.png';
   }
 
   canvasContext.save();
@@ -279,7 +375,7 @@ function drawIconAtRotation() {
       canvas.width,canvas.height)});
 }
 
-function goToUrl(url) {
+function goToNewUrl(url) {
   chrome.tabs.getAllInWindow(undefined, function(tabs) {
     for (var i = 0, tab; tab = tabs[i]; i++) {
       if (tab.url && tab.url == url) {
@@ -291,19 +387,27 @@ function goToUrl(url) {
   });
 }
 
-function goToWaterfall() {
-  var wurl = waterfallUrl();
-
+function goToUrl(url) {
   if (localStorage.onClickBehavior != "reuse") {
-    chrome.tabs.create({url: wurl});
+    chrome.tabs.create({url: url});
     return;
   }
 
-  goToUrl(wurl);
+  goToNewUrl(url);
+}
+
+function goToWaterfall() {
+  goToUrl(waterfallUrl());
+}
+
+function goToStatusPage() {
+  var url = getStatusUrl();
+  url = url.substr(0, url.lastIndexOf('/'));
+  goToUrl(url);
 }
 
 // Called when the user clicks on the browser action.
 chrome.browserAction.onClicked.addListener(function(tab) {
   goToWaterfall();
-  startRequest();
+  startRequests();
 });

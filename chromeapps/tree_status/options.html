@@ -17,7 +17,7 @@
         </li>
       </ul>
       <ul>
-        <li>&nbsp;<img src='icon_128.png'></li>
+        <li>&nbsp;<img src='images/icon_128.png'></li>
       </ul>
     </div>
 
@@ -53,10 +53,27 @@
  </label>
 </section>
 
+<section>
+ <h3>Sheriff Settings</h3>
+ <div>
+   <label>
+    <input type="checkbox" id="notify">
+    <span>When sheriff, show pop up notifications when the tree changes state</span>
+   </label>
+ </div>
+ <br>
+ <div>
+   <label>
+    Your username that shows up in the sheriff list (e.g. $USER@chromium.org)
+    <input type="text" id="username">
+   </label>
+ </div>
+</section>
+
 <div>
  <h3>Save Settings</h3>
  <p>
-  <button id="save-button" style="font-weight:bold">Save</button>
+  <button id="save-button" style="font-weight:bold" disabled>Save</button>
   <button id="cancel-button">Cancel</button>
  </p>
  <span id="status" hidden></span>

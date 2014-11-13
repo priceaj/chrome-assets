@@ -6,6 +6,8 @@ var customStatusTextbox;
 var customWaterfallTextbox;
 var onClickBehaviorCheckbox;
 var statusText;
+var sheriffNotifyCheckbox;
+var usernameTextbox;
 var saveButton;
 var cancelButton;
 
@@ -14,12 +16,16 @@ window.onload = function() {
   customWaterfallTextbox = document.getElementById("custom-waterfall");
   onClickBehaviorCheckbox = document.getElementById("onclick-behavior");
   statusText = document.getElementById("status");
+  sheriffNotifyCheckbox = document.getElementById("notify");
+  usernameTextbox = document.getElementById("username");
   saveButton = document.getElementById("save-button");
   cancelButton = document.getElementById("cancel-button");
 
   customStatusTextbox.oninput = markDirty;
   customWaterfallTextbox.oninput = markDirty;
   onClickBehaviorCheckbox.onclick = markDirty;
+  sheriffNotifyCheckbox.onclick = markDirty;
+  usernameTextbox.oninput = markDirty;
   saveButton.onclick = save;
   cancelButton.onclick = init;
 
@@ -32,16 +38,23 @@ function init() {
   customWaterfallTextbox.placeholder = default_waterfall_url;
   customWaterfallTextbox.value = localStorage.customWaterfall || "";
   onClickBehaviorCheckbox.checked = localStorage.onClickBehavior != "reuse";
+  sheriffNotifyCheckbox.checked = localStorage.notifyBehavior != "none";
+  usernameTextbox.placeholder = 'Enter your @chromium.org username';
+  usernameTextbox.value = localStorage.username || "";
 
-  var origins_url = originsUrl(localStorage.customStatus || default_status_url);
+  var origins_urls = [];
+  origins_urls.push(originsUrl(localStorage.customStatus || default_status_url));
+  origins_urls.push(originsUrl(localStorage.customWaterfall || default_waterfall_url));
   chrome.permissions.contains({
-    origins: [origins_url]
+    origins: origins_urls
   }, function(granted) {
-    if (granted)
+    if (granted) {
       markClean();
-    else
+    } else {
+      markDirty();
       setStatus('Please hit the save button to grant permission to the ' +
                 'waterfalls', 0);
+    }
   });
 }
 
@@ -62,6 +75,9 @@ function save() {
   localStorage.customWaterfall = customWaterfallTextbox.value;
   localStorage.onClickBehavior =
     onClickBehaviorCheckbox.checked ? "newtab" : "reuse";
+  localStorage.notifyBehavior =
+    sheriffNotifyCheckbox.checked ? "sheriff" : "none";
+  localStorage.username = usernameTextbox.value;
 
   var status_url = customStatusTextbox.value || default_status_url;
   var perm_url = originsUrl(status_url);
