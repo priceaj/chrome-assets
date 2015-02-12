@@ -121,16 +121,28 @@ show_file() {
   local file_type="$1"
   local locale="$2"
   local text_file="$3"
+  local rc=0
 
   # File extension (.png) is required for render engine (pango-view) to decide
   # output format.
   TEMP_FILE="$(mktemp --tmpdir -u).png"
   message_to_png "$text_file" "$TEMP_FILE" "$locale" \
     "$ASSETS_IMAGE_PATH/boot_message.png"
-  ply-image --clear 0x"$IMAGE_BACKGROUND_RGB" \
-    "$ASSETS_IMAGE_PATH/boot_message.png"
-  ply-image "$TEMP_FILE" || rc=$?
-  need_spinner "$file_type" && show_spinner "$TEMP_FILE" || true
+  if [ -x /sbin/frecon ]; then
+    # Stop any running frecon instance.
+    pkill -9 frecon || true
+    frecon --clear 0x"$IMAGE_BACKGROUND_RGB" --frame-interval 0 \
+      "$ASSETS_IMAGE_PATH/boot_message.png" "$TEMP_FILE" &
+    # We don't know when frecon will be ready to render the file, so keep it
+    # until next boot.
+    TEMP_FILE=""
+    # No spinner available, sorry.
+  else
+    ply-image --clear 0x"$IMAGE_BACKGROUND_RGB" \
+      "$ASSETS_IMAGE_PATH/boot_message.png"
+    ply-image "$TEMP_FILE" || rc=$?
+    need_spinner "$file_type" && show_spinner "$TEMP_FILE" || true
+  fi
   return $rc
 }
 
