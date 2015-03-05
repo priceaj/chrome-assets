@@ -76,11 +76,18 @@ function alarmNameToTabId(alarmName) {
 
 // If the network has not yet been synced, use this value.
 // A current one can be found at:
-const kCurrentIterUrl = 'http://chromepmo.appspot.com/schedule/iteration/json';
-var iterState = {
-  'start': (new Date('06 Jan 2014')).getTime(),
-  'end': 0,
-  'iteration': 97,
+const kCurrentScheduleUrl = 'https://brillo-program.appspot.com/schedule';
+var state = {
+  'week': {
+    'name': 'Week-1507',
+    'start': (new Date('23 Feb 2015')).getTime(),
+    'end': 0,
+  },
+  'phase': {
+    'name': 'Phase-1',
+    'start': (new Date('26 Feb 2015')).getTime(),
+    'end': 0,
+  },
   'lastsync': 0,
 };
 
@@ -104,8 +111,8 @@ function fetchUrl(url, callback) {
 }
 
 // Grab the current iteration details from the server.
-function updateIterData(callback) {
-  var url = kCurrentIterUrl;
+function updateData(callback) {
+  var url = kCurrentScheduleUrl;
 
   function readResponse(responseText) {
     var resp;
@@ -115,7 +122,7 @@ function updateIterData(callback) {
       console.error(url + '\nparsing response failed\n' + responseText, e);
     }
 
-    if ('start' in resp && 'end' in resp && 'iteration' in resp) {
+    if ('iteration' in resp && 'phase' in resp) {
       // The dates we get from the server are in UTC and align to midnight.
       // But the intention is not to have everyone in the world line up to
       // UTC.  From the Chrome PMO list:
@@ -132,18 +139,26 @@ function updateIterData(callback) {
         var d = new Date(utc_date);
         return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
       }
-      iterState = {
-        'start': localizeUTCDate(resp.start).getTime(),
-        'end': localizeUTCDate(resp.end).getTime(),
-        'iteration': resp.iteration,
+      state = {
+        'week': {
+          'start': localizeUTCDate(resp.iteration.start).getTime(),
+          'end': localizeUTCDate(resp.iteration.end).getTime(),
+          'name': resp.iteration.name,
+        },
+        'phase': {
+          'start': localizeUTCDate(resp.phase.start).getTime(),
+          'end': localizeUTCDate(resp.phase.end).getTime(),
+          'name': resp.phase.name,
+        },
         'lastsync': Date.now(),
       };
       // The response tells us the start of the last day of the iteration
       // rather than the time it ends.  e.g. We get back the date:
       //   Sun 19 Jan 2014 00:00:00
       // That means all of Sunday is part of this iteration.
-      iterState.end += kMillisPerDay;
-      storage.set(iterState);
+      state.week.end += kMillisPerDay;
+      state.phase.end += kMillisPerDay;
+      storage.set(state);
       callback();
       return;
     } else {
@@ -154,28 +169,33 @@ function updateIterData(callback) {
 }
 
 // Make sure our iter data is synced from storage and up-to-date.
-function syncIterState(callback) {
+function syncState(callback) {
   if (callback === undefined)
     callback = function(){};
 
-  var keys = ['start', 'end', 'iteration', 'lastsync'];
+  // Clear out old keys from previous extension versions.
+  var keys = ['start', 'end', 'iteration'];
+  storage.remove(keys);
+
+  // Load the current keys.
+  var keys = ['week', 'phase', 'lastsync'];
   storage.get(keys, function (items) {
     // Storage might not have all keys, so only sync what we get back.
     keys.forEach(function (key) {
       if (key in items)
-        iterState[key] = items[key];
+        state[key] = items[key];
     });
 
     var now = Date.now();
 
     // Draw the icon fast using current data as it'll usually be right.
-    if (now >= iterState.start && now < iterState.end)
+    if (now >= state.week.start && now < state.week.end)
       callback();
 
     // See if we need to fetch an update.  Do it at least once a day.
-    if (iterState.end <= now ||
-        iterState.lastsync + kMillisPerDay < now) {
-      updateIterData(callback);
+    if (state.week.end <= now ||
+        state.lastsync + kMillisPerDay < now) {
+      updateData(callback);
     }
   });
 }
@@ -187,30 +207,36 @@ function millisPerIter() {
   return kMillisPerDay * 7 * 2;
 }
 
-function getIter() {
+function getWeekInt() {
   var now = Date.now();
   // If our current data is viable, use it.  Else make a guess.
-  if (now >= iterState.start && now < iterState.end)
-    return iterState.iteration;
+  var week = state.week.name.replace(/^Week-/, '');
+  if (now >= state.week.start && now < state.week.end)
+    return Math.floor(week);
   else
-    return Math.floor(iterState.iteration,
-                      (now - iterState.start) / millisPerIter());
+    return Math.floor(week, (now - state.week.start) / millisPerIter());
 }
 
 function millisToDateString(msecs) {
   return (new Date(msecs)).toDateString();
 }
 
-function iterSummary() {
+function stateSummary() {
   // This might return stale data, but it won't be wrong data.
   // Not a big deal as it should be rare that it's stale.
   //
   // We need to round the days in case of daylight transitions
   // where it might be +/- some hours.
-  return 'Chromium Iteration ' + iterState.iteration + '\n' +
-         'First: ' + millisToDateString(iterState.start) + '\n' +
-         'Last: ' + millisToDateString(iterState.end - kMillisPerDay) + '\n' +
-         'Duration: ' + Math.round((iterState.end - iterState.start) /
+  return 'Chromium ' + state.week.name + '\n' +
+         'First: ' + millisToDateString(state.week.start) + '\n' +
+         'Last: ' + millisToDateString(state.week.end - kMillisPerDay) + '\n' +
+         'Duration: ' + Math.round((state.week.end - state.week.start) /
+                                   kMillisPerDay) + ' days\n' +
+         '\n' +
+         'Chromium ' + state.phase.name + '\n' +
+         'First: ' + millisToDateString(state.phase.start) + '\n' +
+         'Last: ' + millisToDateString(state.phase.end - kMillisPerDay) + '\n' +
+         'Duration: ' + Math.round((state.phase.end - state.phase.start) /
                                    kMillisPerDay) + ' days';
 }
 
@@ -230,38 +256,41 @@ function drawCorner(ctx, cornerX, cornerY, endX, endY) {
   ctx.fill();
 }
 
+// Pad out |num| with leading zeros to |digits|.
+function pad(num, digits) {
+  return ('0000' + num).slice(-digits);
+}
+
 function updateCanvas() {
   var canvas = document.getElementById('canvas');
   if (!canvas.getContext)
     return;
   var ctx = canvas.getContext('2d');
 
-  var topSize = 0;
-  ctx.fillStyle = 'rgba(0, 51, 0, 255)';
-  ctx.fillRect(0, 0, canvas.width, topSize);
-  // ctx.fillStyle = 'rgba(208, 208, 208, 0.8)';
-  // var topSide = 3;
-  // ctx.fillRect(topSide, 1, canvas.width - 2 * topSide, 1);
+  // Fill the background.  Use a slightly less-than-white color so that the
+  // text is guaranteed to stand out.
+  ctx.fillStyle = '#eeeeee';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-  ctx.fillStyle = '#008000';
-  ctx.fillRect(0, topSize, canvas.width, canvas.height - topSize);
-
-  ctx.font = 'bold 8pt Open Sans, sans-serif';
-  ctx.fillStyle = 'rgb(255, 255, 255)';
-  ctx.shadowColor = '#000000';
+  // Give the text a slight shadow/blur to make it more readable.
+  ctx.shadowColor = '#ffffff';
   ctx.shadowOffsetX = 1;
   ctx.shadowOffsetX = 1;
   ctx.shadowBlur = 1;
-  var iter = getIter();
-  var intIter = Math.floor(iter);
-  var progress = iter - intIter;
-  ctx.fillText('' + intIter, 1, canvas.height * .7, canvas.width);
-  ctx.shadowOffsetX = 0;
-  ctx.shadowOffsetX = 0;
-  ctx.shadowBlur = 0;
 
-  ctx.fillStyle = 'rgb(0, 192, 0)';
-  ctx.fillRect(0, canvas.height - 2, canvas.width * progress, 2);
+  // Write out the text in black.  This lets us use the space around the icon
+  // to give us more contrast and make the text larger.
+  ctx.font = 'bold 10pt Open Sans, sans-serif';
+  ctx.fillStyle = '#000000';
+  // Since the # is going to be 4 digits, split it into two and stack on top
+  // of each other.  This lets us use a larger text.
+  var intWeek = getWeekInt();
+  var intTop = Math.floor(intWeek / 100);
+  var intBottom = intWeek % 100;
+  ctx.fillText('' + intTop, 1, canvas.height / 2 - 1);
+  ctx.fillText(pad(intBottom, 2), 2, canvas.height - 0);
+
+  // Give the icon some rounded corners.
   var sz = 4;
   drawCorner(ctx, 0, 0, sz, sz);
   drawCorner(ctx, canvas.width, 0, canvas.width - sz, sz);

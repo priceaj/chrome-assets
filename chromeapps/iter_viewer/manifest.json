@@ -1,14 +1,14 @@
 {
   "manifest_version": 2,
-  "minimum_chrome_version": "22",
+  "minimum_chrome_version": "30",
   "name": "Chromium Iteration Viewer",
-  "version": "4.2",
-  "description": "Shows the current Chromium Iteration when looking at the issue tracker.",
+  "version": "5.0",
+  "description": "Shows the current Chromium Week/Phase/Iteration when looking at the issue tracker.",
   "icons": {
     "128": "icon-128x128.png"
   },
   "page_action": {
-    "default_title": "Current Chromium Iteration"
+    "default_title": "Current Chromium Week/Phase/Iteration"
   },
   "background": {
     "persistent": false,
@@ -19,6 +19,6 @@
     "storage",
     "tabs",
     "webNavigation",
-    "http://chromepmo.appspot.com/schedule/iteration/json"
+    "https://brillo-program.appspot.com/schedule"
   ]
 }

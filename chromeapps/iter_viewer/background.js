@@ -4,10 +4,10 @@
 
 // When visiting a tracker page, show the icon.
 chrome.webNavigation.onCommitted.addListener(function(e) {
-  syncIterState(function() {
-    // Set an alarm to update icon when the iteration changes.
+  syncState(function() {
+    // Set an alarm to update icon when the next change occurs.
     chrome.alarms.create(tabIdToAlarmName(e.tabId), {
-      'when': iterState.end,
+      'when': Math.min(state.week.end, state.phase.end),
       'periodInMinutes': millisPerIter() / 1000 / 60
     });
 
@@ -62,7 +62,7 @@ chrome.alarms.onAlarm.addListener(function(alarm) {
       console.log('OK to ignore previous error related to tab ' + tabId);
       chrome.alarms.clear(alarm.name);
     } else {
-      updateIterData(function() { setIcon(tabId); });
+      updateData(function() { setIcon(tabId); });
     }
   });
 });
@@ -74,7 +74,7 @@ function setIcon(tabId) {
   var ctx = canvas.getContext('2d');
   var imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   chrome.pageAction.setIcon({'tabId':tabId, 'imageData':imageData});
-  chrome.pageAction.setTitle({'tabId':tabId, 'title':iterSummary()});
+  chrome.pageAction.setTitle({'tabId':tabId, 'title':stateSummary()});
   chrome.pageAction.show(tabId);
   chrome.pageAction.setPopup({'tabId':tabId, 'popup':'popup.html'});
 }

@@ -3,7 +3,7 @@
 // found in the LICENSE file.
 
 window.onload = function() {
-  syncIterState(function() {
-    document.querySelector('#status').innerText = iterSummary();
+  syncState(function() {
+    document.querySelector('#status').innerText = stateSummary();
   });
 };
