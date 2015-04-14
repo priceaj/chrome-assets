@@ -22,14 +22,10 @@
 : ${SPINNER_IMAGE_BASE:=/usr/share/chromeos-assets/images/spinner/48x48}
 : ${SPINNER_INTERVAL:=100}
 
-TEMP_FILE=""
-
-# Clean temporary file.
-clean_temp() {
-  if [ -n "$TEMP_FILE" ]; then
-    rm -f "$TEMP_FILE"
-    TEMP_FILE=""
-  fi
+create_temp_output() {
+  # File extension (.png) is required for render engine (pango-view) to decide
+  # output format.
+  mktemp --suffix .png
 }
 
 # Prints width of given PNG file.
@@ -63,8 +59,9 @@ message_to_png() {
   local output="$2"
   local locale="$3"
   local max_size_file="$4"
+  local extra_options="$5"
 
-  txt_to_png "$input" "$output" "$locale"
+  txt_to_png "$input" "$output" "$locale" "$extra_options"
 
   # We prefer a "left-aligned text image on center of screen, with text
   # wrapped by margin of its background image (max_size_file)". However if a
@@ -77,7 +74,8 @@ message_to_png() {
     local max_width="$(get_png_width "$max_size_file")"
     local width="$(get_png_width "$output")"
     if [ "$max_width" -gt 0 -a "$width" -gt "$max_width" ]; then
-      txt_to_png "$input" "$output" "$locale" "--width=$max_width"
+      extra_options="$extra_options --width=$max_width"
+      txt_to_png "$input" "$output" "$locale" "$extra_options"
     fi
   fi
 }
@@ -87,7 +85,8 @@ need_spinner() {
   local message="$1"
 
   case "$message" in
-    enter_dev2 | leave_dev | self_repair | update_firmware )
+    enter_dev2 | leave_dev | self_repair | update_firmware | power_wash | \
+      show_spinner | wipe)
       return 0
       ;;
     * )
@@ -116,33 +115,50 @@ show_spinner() {
   done &
 }
 
-# Shows an arbitrary text file.
-show_file() {
-  local file_type="$1"
-  local locale="$2"
-  local text_file="$3"
+# Renders given images to screen.
+render_images() {
   local rc=0
+  local message="$1"
+  local file="$2"
 
-  # File extension (.png) is required for render engine (pango-view) to decide
-  # output format.
-  TEMP_FILE="$(mktemp --tmpdir -u).png"
-  message_to_png "$text_file" "$TEMP_FILE" "$locale" \
-    "$ASSETS_IMAGE_PATH/boot_message.png"
+  # Keep a copy of file in temp folder and never delete so it won't be removed
+  # before the renderer (frecon or ply-image, running in background) is ready.
+  # This is required for factory wiping that file lives on stateful partition.
+  # It will be removed only when system reboots.
+  local image_file="$(create_temp_output)"
+  cp -f "$file" "$image_file"
+
   if [ -x /sbin/frecon ]; then
     # Stop any running frecon instance.
     pkill -9 frecon || true
     frecon --clear 0x"$IMAGE_BACKGROUND_RGB" --frame-interval 0 \
-      "$ASSETS_IMAGE_PATH/boot_message.png" "$TEMP_FILE" &
-    # We don't know when frecon will be ready to render the file, so keep it
-    # until next boot.
-    TEMP_FILE=""
+      "$ASSETS_IMAGE_PATH/boot_message.png" "$image_file" &
     # No spinner available, sorry.
   else
     ply-image --clear 0x"$IMAGE_BACKGROUND_RGB" \
       "$ASSETS_IMAGE_PATH/boot_message.png"
-    ply-image "$TEMP_FILE" || rc=$?
-    need_spinner "$file_type" && show_spinner "$TEMP_FILE" || true
+    ply-image "$image_file" || rc=$?
+    need_spinner "$message" && show_spinner "$image_file" || true
   fi
+  return $rc
+}
+
+# Shows an arbitrary text file.
+show_text_file() {
+  local message="$1"
+  local locale="$2"
+  local file="$3"
+  local options="$4"
+  local rc
+
+  # Some systems run the rendering in background (for example, frecon) and we
+  # don't know when the file will be accessed; so keep the file undeleted until
+  # next boot.
+  local output="$(create_temp_output)"
+  message_to_png "$file" "$output" "$locale" \
+    "$ASSETS_IMAGE_PATH/boot_message.png" "$options" &&
+  render_images "$message" "$output" || rc=$?
+  rm -f "$output"
   return $rc
 }
 
@@ -151,29 +167,43 @@ show_message() {
   local message="$1"
   local locales="$2"
   local rc=0
-  local locale text_file
+  local locale file
 
   for locale in $locales; do
-    text_file="$MESSAGE_BASE_PATH/$locale/$message.txt"
-    [ -f "$text_file" ] || continue
-    show_file "$message" "$locale" "$text_file" || rc=$?
+    file="$MESSAGE_BASE_PATH/$locale/$message.txt"
+    [ -f "$file" ] || continue
+    show_text_file "$message" "$locale" "$file" "" || rc=$?
     return $rc
   done
   # If none of given locales have this message, return as failure.
   return 1
 }
 
-main() {
-  local option text_file locale
+# Shows a PNG image file or text markup file.
+show_file() {
+  local message="$1"
+  local file="$2"
 
+  case "$file" in
+    *.png)
+      render_images "$message" "$file"
+      ;;
+
+    *)
+      show_text_file "$message" "" "$file" "--markup"
+      ;;
+  esac
+}
+
+main() {
   if [ "$#" != "2" ]; then
-    echo "Usage: $0 [MESSAGE LOCALES | show_file FILE]" >&2
+    echo "Usage: $0 [MESSAGE LOCALES | show_file FILE | show_spinner FILE]" >&2
     exit 1
   fi
 
   case "$1" in
-    show_file )
-      show_file "$1" "en" "$2"
+    show_file | show_spinner)
+      show_file "$1" "$2"
       ;;
     * )
       show_message "$1" "$2"
@@ -182,5 +212,4 @@ main() {
 }
 
 set -e
-trap clean_temp EXIT
 main "$@"
