@@ -95,31 +95,13 @@ need_spinner() {
   esac
 }
 
-# Shows spinner in left of given message image file, until end of startup stage.
-show_spinner() {
-  local message_file="$1"
-  local control_file="$2"
-  local spinner_file="$SPINNER_IMAGE_BASE"*01.png
-
-  # Put spinner in left of centered message file, with a padding of 1/2 spinner
-  # image width (offset is calculated from the default location, which puts
-  # spinner in center).
-  local spinner_offset_x=-"$(( $(get_png_width "$message_file") / 2 +
-                               $(get_png_width $spinner_file) ))"
-
-  while initctl status startup 2>&1 | grep -q "/running"; do
-    ply-image \
-      --offset "$spinner_offset_x,0" \
-      --frame-interval "$SPINNER_INTERVAL" \
-      "$SPINNER_IMAGE_BASE"*.png
-  done &
-}
-
 # Renders given images to screen.
 render_images() {
   local rc=0
   local message="$1"
   local file="$2"
+  local spiner_offset=""
+  local spinner_file="$SPINNER_IMAGE_BASE"*01.png
 
   # Keep a copy of file in temp folder and never delete so it won't be removed
   # before the renderer (frecon or ply-image, running in background) is ready.
@@ -128,17 +110,44 @@ render_images() {
   local image_file="$(create_temp_output)"
   cp -f "$file" "$image_file"
 
+  # Put spinner in left of centered message file, with a padding of 1/2 spinner
+  # image width (offset is calculated from the default location, which puts
+  # spinner in center).
+  local spinner_offset_x=-"$(( $(get_png_width "${image_file}") / 2 +
+                               $(get_png_width ${spinner_file}) ))"
+
   if [ -x /sbin/frecon ]; then
     # Stop any running frecon instance.
     pkill -9 frecon || true
-    frecon --clear 0x"$IMAGE_BACKGROUND_RGB" --frame-interval 0 \
-      "$ASSETS_IMAGE_PATH/boot_message.png" "$image_file" &
-    # No spinner available, sorry.
+
+    local params="--clear 0x${IMAGE_BACKGROUND_RGB} \
+      --frame-interval 0 \
+      ${ASSETS_IMAGE_PATH}/boot_message.png \
+      ${image_file}"
+
+    # Frecon requires all options specified before image files.
+    if need_spinner "${message}"; then
+      params="\
+        --loop-offset ${spinner_offset_x},0 \
+        --loop-interval ${SPINNER_INTERVAL} \
+        --loop-start 2 \
+        ${params} \
+        ${SPINNER_IMAGE_BASE}*.png"
+    fi
+
+    frecon ${params} &
   else
     ply-image --clear 0x"$IMAGE_BACKGROUND_RGB" \
       "$ASSETS_IMAGE_PATH/boot_message.png"
     ply-image "$image_file" || rc=$?
-    need_spinner "$message" && show_spinner "$image_file" || true
+    if need_spinner "${message}"; then
+      while initctl status startup 2>&1 | grep -q "/running"; do
+        ply-image \
+          --offset "${spinner_offset_x},0" \
+          --frame-interval "${SPINNER_INTERVAL}" \
+          "${SPINNER_IMAGE_BASE}"*.png
+      done &
+    fi
   fi
   return $rc
 }
