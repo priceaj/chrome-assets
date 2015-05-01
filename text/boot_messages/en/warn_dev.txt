@@ -17,4 +17,3 @@
                      \         |
                       \_______/
  Chrome OS verification is turned off.
-   Press space to begin recovery.
