@@ -140,7 +140,9 @@ render_images() {
         ${SPINNER_IMAGE_BASE}*.png"
     fi
 
-    frecon ${params} &
+    local pts="$(frecon --daemon ${params})"
+    # Simulate the TTY1 for text output (for example, progress bar).
+    [ -c "${pts}" ] && ln -s /dev/tty1 "${pts}"
   else
     ply-image --clear 0x"$IMAGE_BACKGROUND_RGB" \
       "$ASSETS_IMAGE_PATH/boot_message.png"
