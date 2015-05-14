@@ -120,7 +120,12 @@ render_images() {
     # Stop any running frecon instance.
     pkill -9 frecon || true
 
-    local params="--clear 0x${IMAGE_BACKGROUND_RGB} \
+    # By default frecon would exit after all images are displayed unless there
+    # is --loop-start or --dev-mode. Most boot-time messages need to keep the
+    # display until reboot so we want to always add --dev-mode.
+
+    local params="--dev-mode \
+      --clear 0x${IMAGE_BACKGROUND_RGB} \
       --frame-interval 0 \
       ${ASSETS_IMAGE_PATH}/boot_message.png \
       ${image_file}"
