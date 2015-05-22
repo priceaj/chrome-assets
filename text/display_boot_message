@@ -142,7 +142,12 @@ render_images() {
 
     local pts="$(frecon --daemon ${params})"
     # Simulate the TTY1 for text output (for example, progress bar).
-    [ -c "${pts}" ] && ln -s /dev/tty1 "${pts}"
+    # Some legacy scripts may create a broken TTY1 so we want to delete that if
+    # it is not a character device.
+    if [ -c "${pts}" -a ! -c /dev/tty1 ]; then
+      rm /dev/tty1
+      ln -sf "${pts}" /dev/tty1
+    fi
   else
     ply-image --clear 0x"$IMAGE_BACKGROUND_RGB" \
       "$ASSETS_IMAGE_PATH/boot_message.png"
