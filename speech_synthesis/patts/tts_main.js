@@ -17,28 +17,57 @@
 
 'use strict';
 
-var TtsMain = function() {
-  this.callback = null;
-  this.utteranceId = 0;
-  this.voice = null;
-  this.lang = '';
-  this.voiceName = '';
-  this.pendingSpeechRequest = null;
+/**
+ * @constructor
+ *
+ * Simple structure to hold a pending request, this is used when we
+ * get a request to speak before the engine is initialized.
+ *
+ * @param {string} utterance The utterance to speak.
+ * @param {object} options A map of strings to values, options like
+ * pitch, volume, etc.
+ * @param {callback} callback The callback to call to report progress,
+ * finalization, cancellation.
+ */
+var PendingRequest = function(utterance, options, callback) {
+  this.utterance = utterance;
+  this.options = options;
+  this.callback = callback;
 };
 
+var TtsMain = function() {
+  this.callback_ = null;
+  this.utteranceId_ = 0;
+  this.voice_ = null;
+  this.lang_ = '';
+  this.voiceName_ = '';
+  this.pendingSpeechRequest_ = null;
+};
+
+/**
+ * Function called on startup.
+ */
 TtsMain.prototype.run = function() {
   document.addEventListener('unload', this.unload, false);
-  this.getVoiceNamesFromManifest(function() {
-    this.loadControllers();
+  this.getVoiceNamesFromManifest_(function() {
+    this.loadControllers_();
     chrome.ttsEngine.onSpeak.addListener(this.onSpeak.bind(this));
     chrome.ttsEngine.onStop.addListener(this.onStop.bind(this));
   });
 };
 
-TtsMain.prototype.getVoiceNamesFromManifest = function(completion) {
+/**
+ * Loads the file 'manifest.json' and updates the voice name for
+ * all voices on window.voices
+ * Matching is done by language plus gender.
+ *
+ * @private
+ * @param {callback} completion The function to call once we finish.
+ */
+TtsMain.prototype.getVoiceNamesFromManifest_ = function(completion) {
   var self = this;
-  var xhr = new XMLHttpRequest();
-  xhr.onload = function() {
+  var xmlHttpRequest = new XMLHttpRequest();
+  xmlHttpRequest.onload = function() {
     var manifest = JSON.parse(this.responseText);
     var manifestVoices = manifest.tts_engine.voices;
     var langGenderMap = {};
@@ -52,101 +81,138 @@ TtsMain.prototype.getVoiceNamesFromManifest = function(completion) {
     }
     (completion.bind(self))();
   };
-  xhr.open('get', chrome.extension.getURL('manifest.json'), true);
-  xhr.send();
-};
-
-TtsMain.prototype.loadControllers = function() {
-  this.hmmController = new TtsController('hmm', this);
-//  this.uselController = new TtsController('usel', this);
+  xmlHttpRequest.open('get', chrome.extension.getURL('manifest.json'), true);
+  xmlHttpRequest.send();
 };
 
 /**
- * Called by one of the TTS controllers.
+ * Creates two tts controllers, one for unit selection and one for hmm.
+ * @private
+ */
+TtsMain.prototype.loadControllers_ = function() {
+  this.hmmController_ = new TtsController('hmm', this, navigator.language);
+  this.uselController_ = new TtsController('usel', this, navigator.language);
+};
+
+/**
+ * Called by one of the TTS controllers when it finishes it's initialization.
  */
 TtsMain.prototype.onInitialized = function() {
-  this.speakPendingRequest();
+  this.speakPendingRequest_();
 };
 
 /**
- * Called by one of the TTS controllers.
+ * Called by one of the TTS controllers when we have a message coming from
+ * the engine, to send to the client.
+ *
+ * @param {string} utteranceId The Identifier for the utterance this message
+ *     is about.
+ * @param {object} response The message coming from the engine, to be sent
+ *     to the callback function provided by the client.
  */
 TtsMain.prototype.onResponse = function(utteranceId, response) {
-  if (utteranceId != this.utteranceId || this.callback == null) {
+  if (utteranceId != this.utteranceId_ || this.callback_ == null) {
     return;
   }
 
-  console.log('onResponse type=' + response.type + ' utteranceId=' + utteranceId);
+  console.log('onResponse type=' + response.type +
+              ' utteranceId=' + utteranceId);
 
-  this.callback(response);
+  this.callback_(response);
   var type = response.type;
   if (type == 'end' || type == 'interrupted' ||
       type == 'cancelled' || type == 'error') {
-    this.callback = null;
+    this.callback_ = null;
   }
 };
 
+/**
+ * Called by the client to stop speech.
+ */
 TtsMain.prototype.onStop = function() {
-  this.pendingSpeechRequest = null;
-  this.callback = null;
-  this.hmmController.onStop();
-//  this.uselController.onStop();
+  this.pendingSpeechRequest_ = null;
+  this.callback_ = null;
+  this.hmmController_.onStop();
+  this.uselController_.onStop();
 };
 
+/**
+ * Called by the client to start speech synthesis.
+ *
+ * @param {string} utterance The utterance to say.
+ * @param {object} options The options affecting the speech, like language,
+ *     pitch, rate, etc.
+ * @param {function} callback The function to recieve messages from the engine.
+ */
 TtsMain.prototype.onSpeak = function(utterance, options, callback) {
   console.log('Will speak: "' + utterance + '" lang="' + options.lang + '"');
 
-  this.hmmController.switchVoiceIfNeeded(
+  this.hmmController_.switchVoiceIfNeeded(
       options.voiceName, options.lang, options.gender);
-//  this.uselController.switchVoiceIfNeeded(
-//      options.voiceName, options.lang, options.gender);
+  this.uselController_.switchVoiceIfNeeded(
+      options.voiceName, options.lang, options.gender);
 
-  if (!this.hmmController.initialized) { //  && !this.uselController.initialized) {
-    console.log('Nothing is initialized yet.');
-    if (this.pendingSpeechRequest) {
+  if (!this.hmmController_.isInitialized() &&
+      !this.uselController_.isInitialized()) {
+    console.log('No text-to-speech controller is initialized yet.');
+    if (this.pendingSpeechRequest_) {
+      // Chrome takes care of queueing. The extension only needs to handle one
+      // utterance at a time. If a new speak request is received that always
+      // means to interrupt / throw away the previous one.
       var response = {type: 'cancelled', charIndex: 0};
-      var pendingCallback = this.pendingSpeechRequest[2];
+      var pendingCallback = this.pendingSpeechRequest_.callback;
       pendingCallback(response);
-      this.pendingSpeechRequest = null;
+      this.pendingSpeechRequest_ = null;
     }
 
-    this.pendingSpeechRequest = [utterance, options, callback];
+    this.pendingSpeechRequest_ = new PendingRequest(utterance, options,
+                                                    callback);
     return;
   }
 
-  this.hmmController.onStop();
-//  this.uselController.onStop();
+  this.hmmController_.onStop();
+  this.uselController_.onStop();
 
-  this.utteranceId++;
-  this.callback = callback;
-  console.log('SETTING CALLBACK, id=' + this.utteranceId);
+  this.utteranceId_++;
+  this.callback_ = callback;
+  console.log('SETTING CALLBACK, id=' + this.utteranceId_);
 
-//  if (this.uselController.initialized) {
-//    console.log('Using unit selection');
-//    this.currentController = this.uselController;
-//  } else {
+  if (this.uselController_.isInitialized()) {
+    console.log('Using unit selection');
+    this.currentController = this.uselController_;
+  } else {
     console.log('Using HMM');
-    this.currentController = this.hmmController;      
-//  }
+    this.currentController = this.hmmController_;
+  }
 
-  this.currentController.onSpeak(utterance, options, this.utteranceId);
+  this.currentController.onSpeak(utterance, options, this.utteranceId_);
 };
 
-TtsMain.prototype.speakPendingRequest = function() {
-  if (!this.pendingSpeechRequest)
+/**
+ * If we were required to synthesize some speech before any engine was
+ * initialized, the last request was saved and this function is called
+ * to start synthesis when the first engine is ready.
+ * @private
+ */
+TtsMain.prototype.speakPendingRequest_ = function() {
+  if (!this.pendingSpeechRequest_)
     return;
 
-  var utterance = this.pendingSpeechRequest[0];
-  var options = this.pendingSpeechRequest[1];
-  var callback = this.pendingSpeechRequest[2];
-  this.pendingSpeechRequest = null;
+  var utterance = this.pendingSpeechRequest_.utterance;
+  var options = this.pendingSpeechRequest_.options;
+  var callback = this.pendingSpeechRequest_.callback;
+  this.pendingSpeechRequest_ = null;
   this.onSpeak(utterance, options, callback);
 };
 
-TtsMain.prototype.unload = function() {
-  this.hmmController.unload();
-//  this.uselController.unload();
+/**
+ * Method called when the window is closed to do the clean up
+ * @private
+ */
+TtsMain.prototype.unload_ = function() {
+  this.hmmController_.unload();
+  this.uselController_.unload();
 };
 
-var ttsController = new TtsMain();
-ttsController.run();
+var ttsMain = new TtsMain();
+ttsMain.run();

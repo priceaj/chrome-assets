@@ -28,268 +28,190 @@
 'use strict';
 
 /**
- * @param {string} method The method used by the voice, e.g. 'hmm' or
+ * @constructor
+ * @param {string} voiceType The voice type to use, e.g. 'hmm' or
  *     'usel'. If set, this controller will only load voices that match
- *     that method.
+ *     that voice type.
  * @param {Object} delegate The object to inform of events.
+ * @param {string} defaultLanguage The default language to use.
  */
-var TtsController = function(method, delegate) {
-  this.method = method;
-  this.delegate = delegate;
-  this.nativeTts = null;
-  this.initialized = false;
-  this.startTime = undefined;
-  this.timeouts = [];
-  this.idleTimeout = null;
-  this.voice = null;
-  this.lang = '';
-  this.voiceName = '';
-  this.loadLastUsedVoice();
-  this.createNativeTts();
+var TtsController = function(voiceType, delegate, defaultLanguage) {
+  this.voiceType_ = voiceType;
+  this.delegate_ = delegate;
+  this.defaultLanguage_ = defaultLanguage;
+  this.nativeTts_ = null;
+  this.initialized_ = false;
+  this.startTimeMillis_ = undefined;
+  this.timeouts_ = [];
+  this.idleTimeout_ = null;
+  this.voice_ = null;
+  this.voiceName_ = '';
+  this.getDefaultVoice_();
+  this.AUDIO_CHANNEL_TIMEOUT_IN_MILLISECONDS_ = 30000;
 };
 
-TtsController.prototype.loadLastUsedVoice = function() {
-  var lang = localStorage['lastUsedLang'] || navigator.language;
-  var gender = localStorage['lastUsedGender'] || '';
-  var voiceName = localStorage['lastUsedVoiceName'];
-  if (voiceName) {
-    for (var i = 0; i < window.voices.length; i++) {
-      if (this.method && window.voices[i].method != this.method) {
-        continue;
-      }
-      if (window.voices[i].voiceName == voiceName) {
-        this.voice = window.voices[i];
-      }
-    }
-  }
-  if (!this.voice) {
-    this.voice = this.findBestMatchingVoiceMultiplePasses(lang, gender);
-  }
-  if (this.voice) {
-    this.lang = this.voice.lang;
-    this.gender = this.voice.gender;
-    this.voiceName = this.voice.voiceName;
+/**
+ * @private
+ * Initializes the current voice according to the default language.
+ */
+TtsController.prototype.getDefaultVoice_ = function() {
+  this.voice_ = this.findBestMatchingVoice_(this.defaultLanguage_,
+      '');
+  if (this.voice_) {
+    this.voiceName_ = this.voice_.voiceName;
+    this.createNativeTts_();
   }
 };
 
-TtsController.prototype.findBestMatchingVoiceMultiplePasses = function(
-    lang, gender) {
-  // Exact match (speak 'xx-YY' matches lang 'xx-YY')
-  var voice = this.findBestMatchingVoice(lang, gender, false);
-  if (voice) {
-    return voice;
+/**
+ * Called when we get text to speak, encode all parameters
+ * into a string and send to the engine.
+ *
+ * @param {string} utterance The utterance to say.
+ * @param {object} options The options to send to the engine: rate, pitch and
+ *     volume.
+ * @param {string} utteranceId The Identifier for the utterance to say.
+ */
+TtsController.prototype.onSpeak = function(utterance, options, utteranceId) {
+  if (!this.initialized_) {
+    console.error('Error: TtsController for voiceType=' + this.voiceType_ +
+                  ' is not initialized.');
   }
 
-  // Prefix match (speak 'xx' matches lang 'xx-YY')
-  voice = this.findBestMatchingVoice(lang, gender, true);
-  if (voice) {
-    return voice;
-  }
+  this.nativeTts_.postMessage('stop');
 
-  // Match first two letters only (speak 'xx-ZZ' matches lang 'xx-YY')
-  voice = this.findBestMatchingVoice(lang.substr(0, 2), gender, true);
-  if (voice) {
-    return voice;
-  }
+  this.utterance_ = utterance;
 
-  // Match first two letters only, and ignore the gender.
-  voice = this.findBestMatchingVoice(lang.substr(0, 2), '', true);
-  if (voice) {
-    return voice;
-  }
+  var escapedUtterance = this.escapePluginArg_(utterance);
 
-  // If all else fails, return the first voice.
-  return this.findBestMatchingVoice('', '', true);
+  var rate = options.rate || 1.0;
+  var pitch = options.pitch || 1.0;
+  var volume = options.volume || 1.0;
+
+  var tokens = ['speak', rate, pitch, volume,
+                utteranceId, escapedUtterance];
+  this.nativeTts_.postMessage(tokens.join(':'));
+  console.log('Plug-in args are ' + tokens.join(':'));
 };
 
-TtsController.prototype.findBestMatchingVoice = function(
-    lang, gender, prefixOnly) {
-  for (var i = 0; i < window.voices.length; i++) {
-    var voice = window.voices[i];
-    if (this.method && voice.method != this.method) {
-      continue;
-    }
-    if (gender != '' && voice.gender != '' && gender != voice.gender) {
-      continue;
-    }
-    if (voice.lang == lang) {
-      return voice;
-    }
-    if (prefixOnly && voice.lang.substr(0, lang.length) == lang) {
-      return voice;
-    }
-  }
-  return null;
-};
-
+/**
+ * Switch to the specified voice, unless it's the current voice already.
+ *
+ * @param {string} preferredVoiceName The exact name of the voice to switch to.
+ * @param {string} preferredLang The language to switch to.
+ * @param {string} preferredGender The gender to switch to.
+ * @return {boolean} true if we switched to another voice.
+ */
 TtsController.prototype.switchVoiceIfNeeded = function(
-    voiceName, lang, gender) {
-  var voice = null;
-  if (voiceName) {
-    for (var i = 0; i < window.voices.length; i++) {
-      if (window.voices[i].voiceName == voiceName) {
-        voice = window.voices[i];
-      }
-    }
-  }
-  if (!lang) {
-    lang = '';
-  }
-  if (!gender) {
-    gender = '';
-  }
-
-  if (!voice && (lang || gender)) {
-    // First check if the current voice is a valid match - if so, stick with
-    // the current voice. The purpose of this code is so that, for example,
-    // if one utterance wants 'en-GB' and a British voice is loaded, and
-    // the next utterance just wants 'en', it doesn't switch to an American
-    // voice, but rather stays with the loaded British voice.
-    if (!gender || !this.gender || gender == this.gender) {
-      if (!lang || lang == this.lang) {
-        // It's an exact match.
-        voice = this.voice;
-      } else {
-        if (this.lang.substr(0, lang.length) == lang &&
-            this.findBestMatchingVoice(lang, gender, false) == null) {
-          // It's a partial language match AND there's no better match.
-          voice = this.voice;
-        }
-      }
-    }
-
-    // Otherwise, look for the best matching voice.
-    if (!voice) {
-      voice = this.findBestMatchingVoiceMultiplePasses(lang, gender);
-    }
-  }
-
-  if (voice && voice.voiceName != this.voiceName) {
+    preferredVoiceName, preferredLang, preferredGender) {
+  console.log('switchVoiceIfNeeded called.');
+  var voice = this.pickVoiceForParams_(preferredVoiceName, preferredLang,
+                                       preferredGender);
+  if (voice && voice.voiceName != this.voiceName_) {
     console.log('Switching to voice: ' + voice.voiceName);
-    localStorage['lastUsedLang'] = voice.lang;
-    localStorage['lastUsedGender'] = voice.gender;
-    localStorage['lastUsedVoiceName'] = voice.voiceName;
-    this.nativeTts.removeEventListener(
-        'message', this.handleMessageCallback, false);
-    this.unload();
-    this.nativeTts.parentElement.removeChild(this.nativeTts);
-    this.nativeTts = null;
-    this.initialized = false;
-    this.voice = voice;
-    this.lang = voice.lang;
-    this.gender = voice.gender;
-    this.voiceName = voice.voiceName;
-    this.createNativeTts();
+    if (this.nativeTts_) {
+      this.nativeTts_.removeEventListener(
+          'message', this.handleMessageCallback_, false);
+      this.unload();
+      this.nativeTts_.parentElement.removeChild(this.nativeTts_);
+    }
+    this.nativeTts_ = null;
+    this.initialized_ = false;
+    this.voice_ = voice;
+    this.voiceName_ = voice.voiceName;
+    this.createNativeTts_();
     return true;
   }
 
   return false;
 };
 
-TtsController.prototype.createNativeTts = function() {
-  var embed = document.createElement('embed');
-  embed.setAttribute('id', 'tts' + this.method);
-  embed.setAttribute('name', 'nacl_module');
-  embed.setAttribute('src', 'tts_service.nmf');
-  embed.setAttribute('type', 'application/x-nacl');
-  embed.addEventListener('load', this.load.bind(this), false);
-  document.body.appendChild(embed);
-  this.nativeTts = embed;
-
-  // Native Client appears to be buggy and only starts load if any property gets
-  // accessed. Do that now by checking for lastError.
-  if (embed.lastError)
-    console.error('Error while loading native module: ' + embed.lastError);
-};
-
-TtsController.prototype.clearTimeouts = function() {
-  for (var i = 0; i < this.timeouts.length; i++) {
-    window.clearTimeout(this.timeouts[i]);
-  }
-  this.timeouts.length = 0;
-};
-
-TtsController.prototype.escapePluginArg = function(str) {
-  return str.replace(/:/g, '\\:');
-};
-
-TtsController.prototype.onStop = function() {
-  if (!this.initialized) {
-    return;
+/**
+ * Pick the voice that matches the parameters.
+ *
+ * @private
+ * @param {string} preferredVoiceName The exact name of the voice to find.
+ * @param {string} preferredLang The language of the voice to find.
+ * @param {string} preferredGender The gender of the voice to find.
+ * @return {Voice} The voice we found.
+ */
+TtsController.prototype.pickVoiceForParams_ = function(
+    preferredVoiceName, preferredLang, preferredGender) {
+  if (preferredVoiceName) {
+    for (var i = 0; i < window.voices.length; i++) {
+      if (this.voiceType_ && window.voices[i].voiceType != this.voiceType_) {
+        continue;
+      }
+      if (window.voices[i].voiceName == preferredVoiceName) {
+        return window.voices[i];
+      }
+    }
   }
 
-  this.nativeTts.postMessage('stop');
+  return this.findBestMatchingVoice_(preferredLang, preferredGender);
 };
 
-TtsController.prototype.onSpeak = function(utterance, options, utteranceId) {
-  if (!this.initialized) {
-    console.error('Error: TtsController for method=' + this.method +
-                  ' is not initialized.');
+/**
+ * Searches defined voices for the best match for the given language & gender.
+ * Will always return a voice if at least one voice is defined for the voiceType
+ * defined on creation of this object (hmm or usel).
+ *
+ * @private
+ * @param {string} preferredLang The language to search for in BCP-47 format,
+ *      capitalized as BCP-47 recommends, e.g. 'en-US'.  Case sensitive.
+ * @param {string} preferredGender The gender we prefer, male or female. It
+ *      can also be empty, in which case we don't filter based on gender.
+ * @return {Voice} The voice that best matches the parameters.
+ */
+TtsController.prototype.findBestMatchingVoice_ = function(preferredLang,
+                                                          preferredGender) {
+  var SCORE_DEFAULT_LANGUAGE = 2;  // use only to break ties.
+  var SCORE_GENDER_MATCH = 5;
+  var SCORE_LANGUAGE_ONLY_MATCH = 10;  // speak 'xx-ZZ' matching 'xx-YY'
+  var SCORE_LANGUAGE_PREFIX_MATCH = 20;  // speak 'xx' matching 'xx-YY'
+  var SCORE_LANGUAGE_EXACT_MATCH = 30;  // speak 'xx-YY' matching 'xx-YY'
+
+  var langBase = preferredLang ? preferredLang.split('-')[0] : '';
+
+  var best_score = -1;  // We want some voice, even if it has no score
+  var best_voice = null;
+  for (var i = 0; i < window.voices.length; i++) {
+    var voice = window.voices[i];
+    if (this.voiceType_ && voice.voiceType != this.voiceType_) {
+      continue;
+    }
+
+    var score = 0;
+    if (preferredGender && preferredGender == voice.gender) {
+      score += SCORE_GENDER_MATCH;
+    }
+    if (preferredLang) {
+      if (voice.lang == preferredLang) {
+        score += SCORE_LANGUAGE_EXACT_MATCH;
+      } else if (voice.lang.substr(0, preferredLang.length) == preferredLang) {
+        score += SCORE_LANGUAGE_PREFIX_MATCH;
+      } else if (voice.lang.substr(0, langBase.length) == langBase) {
+        score += SCORE_LANGUAGE_ONLY_MATCH;
+      }
+    }
+    if (voice.lang == this.defaultLanguage_) {
+      score += SCORE_DEFAULT_LANGUAGE;
+    }
+    if (score > best_score) {
+      best_score = score;
+      best_voice = voice;
+    }
   }
-
-  this.nativeTts.postMessage('stop');
-
-  this.utterance = utterance;
-
-  var escapedUtterance = this.escapePluginArg(utterance);
-
-  // The Phonetic Arts engine splits things into sentences and doesn't
-  // always speak something if you give it always a single word or
-  // character. As a hack, add a period to the end so that there's always
-  // a sentence.  TODO(dmazzoni) remove this when bug is fixed.
-  escapedUtterance += ' .';
-
-  var rate = options.rate || 1.0;
-  var pitch = options.pitch || 1.0;
-  var volume = options.volume || 1.0;
-
-  var lowercase = escapedUtterance.toLowerCase();
-
-  var tokens = ['speak', rate, pitch, volume,
-                utteranceId, escapedUtterance, lowercase];
-  this.nativeTts.postMessage(tokens.join(':'));
-  console.log('Plug-in args are ' + tokens.join(':'));
+  return best_voice;
 };
 
-TtsController.prototype.progress = function(percent) {
-  if (percent % 10 == 0) {
-    console.log(percent + '% complete.');
-  };
-};
-
-TtsController.prototype.sendResponse = function(id, type, charIndex) {
-  console.log('Doing callback ' + type + ' for ' + id);
-  var response = {type: type};
-  response.charIndex = charIndex ?
-                       charIndex :
-                       (type == 'end' ? this.utterance.length : 0);
-  this.delegate.onResponse(id, response);
-  if (type == 'end' || type == 'interrupted' ||
-      type == 'cancelled' || type == 'error') {
-    this.clearTimeouts();
-  }
-};
-
-TtsController.prototype.handleTtsEvent = function(id, deltaTime, charIndex) {
-  if (deltaTime == 0.0 && charIndex == 0) {
-    this.startTime = new Date();
-    this.sendResponse(id, 'start');
-    return;
-  };
-
-  var currentTime = (new Date() - this.startTime);
-  if (currentTime > 1000 * deltaTime) {
-    this.sendResponse(id, 'word', charIndex);
-  } else {
-    var timeoutId = window.setTimeout((function() {
-      this.sendResponse(id, 'word', charIndex);
-    }).bind(this), 1000 * deltaTime - currentTime);
-    this.timeouts.push(timeoutId);
-  }
-}
-
-TtsController.prototype.handleMessage = function(message_event) {
-  var data = message_event.data;
+/**
+ * Process the messages coming from the engine.
+ *
+ * @param {object} messageEvent the message to process
+ */
+TtsController.prototype.handleMessage = function(messageEvent) {
+  var data = messageEvent.data;
 
   // Log everything except 'percent' messages (those are too verbose).
   if (data.substr(0, 8) != 'percent:') {
@@ -297,34 +219,102 @@ TtsController.prototype.handleMessage = function(message_event) {
   }
 
   if (data == 'idle') {
-    this.setIdleTimeout();
+    this.setIdleTimeout_();
   } else {
-    this.clearIdleTimeout();
+    this.clearIdleTimeout_();
   }
 
   if (data.substr(0, 4) == 'end:') {
     var id = data.substr(4);
     console.log('Got end event for utterance: ' + id);
-    this.sendResponse(id, 'end');
+    this.sendResponse_(id, 'end');
   } else if (data == 'error') {
     console.log('error');
-  } else if (data == 'idle' && !this.initialized) {
-    this.initialized = true;
-    this.delegate.onInitialized();
+  } else if (data == 'idle' && !this.initialized_) {
+    this.initialized_ = true;
+    this.delegate_.onInitialized();
   } else if (data.substr(0, 8) == 'percent:') {
-    this.progress(parseInt(data.substr(8), 10));
+    this.progress_(parseInt(data.substr(8), 10));
   } else if (data.substr(0, 6) == 'event:') {
     var tokens = data.split(':');
-    this.handleTtsEvent(parseInt(tokens[1], 10),
-                        parseFloat(tokens[2]),
-                        parseInt(tokens[3], 10));
+    this.handleTtsEvent_(parseInt(tokens[1], 10),
+                         parseFloat(tokens[2]),
+                         parseInt(tokens[3], 10));
   }
 };
 
+/**
+ * Converts from tts events to the events we send to the client (of types
+ * 'start' and 'word')
+ *
+ * @private
+ * @param {string} id The identifier for the utterance this message is about.
+ * @param {number} deltaTimeSec The time when this message will occur,
+ *     in seconds. May be 0 for a 'start' message, or in the future and we
+ *     need to wait to send it.
+ * @param {number} charIndex The position in the input utterance this event
+ *     is about.
+ */
+TtsController.prototype.handleTtsEvent_ = function(id, deltaTimeSec,
+                                                   charIndex) {
+  if (deltaTimeSec == 0.0 && charIndex == 0) {
+    this.startTimeMillis_ = new Date();
+    this.sendResponse_(id, 'start');
+    return;
+  }
+
+  var currentTimeMillis = (new Date() - this.startTimeMillis_);
+  if (currentTimeMillis > 1000 * deltaTimeSec) {
+    this.sendResponse_(id, 'word', charIndex);
+  } else {
+    var timeoutId = window.setTimeout((function() {
+      this.sendResponse_(id, 'word', charIndex);
+    }).bind(this), 1000 * deltaTimeSec - currentTimeMillis);
+    this.timeouts_.push(timeoutId);
+  }
+};
+
+/**
+ * Sends a message back to the extension, to sent to the client.
+ *
+ * @private
+ * @param {string} id The Identifier for the utterance this message is about.
+ * @param {string} type The type of the message, like 'end', 'start', etc.
+ * @param {number} charIndex Optional argument for messages related to a
+ *     specific position in the input utterance (like message type 'word')
+ */
+TtsController.prototype.sendResponse_ = function(id, type, charIndex) {
+  console.log('Doing callback ' + type + ' for ' + id);
+  var response = {type: type};
+  response.charIndex = charIndex ?
+                       charIndex :
+                       (type == 'end' ? this.utterance_.length : 0);
+  this.delegate_.onResponse(id, response);
+  if (type == 'end' || type == 'interrupted' ||
+      type == 'cancelled' || type == 'error') {
+    this.clearTimeouts_();
+  }
+};
+
+/**
+ * Callback to display loading progress of the voice files.
+ *
+ * @private
+ * @param {int} percent The progress so far, from 0 to 100
+ */
+TtsController.prototype.progress_ = function(percent) {
+  if (percent % 10 == 0) {
+    console.log(percent + '% complete.');
+  }
+};
+
+/**
+ * Send the messages to the engine to load the voice files
+ */
 TtsController.prototype.load = function() {
   this.handleMessageCallback = this.handleMessage.bind(this);
-  console.log('Adding event listener for ' + this.nativeTts.id);
-  this.nativeTts.addEventListener(
+  console.log('Adding event listener for ' + this.nativeTts_.id);
+  this.nativeTts_.addEventListener(
       'message', this.handleMessageCallback, false);
 
   // The lower the chunk size, the lower the latency of the audio - but
@@ -333,53 +323,132 @@ TtsController.prototype.load = function() {
   // well on Chrome OS.
   var chunkSize = 256;
 
-  var args = [this.escapePluginArg(this.voice.projectFile),
-              this.escapePluginArg(this.voice.prefix)];
-  this.nativeTts.postMessage('setProjectFileAndPrefix:' + args.join(':'));
+  var args = [this.escapePluginArg_(this.voice_.pipelineFile),
+              this.escapePluginArg_(this.voice_.prefix)];
+  this.nativeTts_.postMessage('setPipelineFileAndPrefix:' + args.join(':'));
 
-  for (var i = 0; i < this.voice.removePaths.length; i++) {
-    var path = this.voice.removePaths[i];
-    this.nativeTts.postMessage('removeDataFile:' + this.escapePluginArg(path));
+  for (var i = 0; i < this.voice_.removePaths.length; i++) {
+    var path = this.voice_.removePaths[i];
+    this.nativeTts_.postMessage('removeDataFile:' +
+                                this.escapePluginArg_(path));
   }
 
-  for (var i = 0; i < this.voice.files.length; i++) {
-    var dataFile = this.voice.files[i];
+  for (var i = 0; i < this.voice_.files.length; i++) {
+    var dataFile = this.voice_.files[i];
     var url = dataFile.url;
     if (!url) {
       url = chrome.extension.getURL(dataFile.path);
     }
-    args = [this.escapePluginArg(url),
-            this.escapePluginArg(dataFile.path),
-            this.escapePluginArg(dataFile.md5sum),
-            this.escapePluginArg(String(dataFile.size))];
-    if (this.voice.cacheToDisk) {
-      this.nativeTts.postMessage('addDataFile:' + args.join(':'));
+    args = [this.escapePluginArg_(url),
+            this.escapePluginArg_(dataFile.path),
+            this.escapePluginArg_(dataFile.md5sum),
+            this.escapePluginArg_(String(dataFile.size))];
+    if (this.voice_.cacheToDisk) {
+      this.nativeTts_.postMessage('addDataFile:' + args.join(':'));
     } else {
-      this.nativeTts.postMessage('addMemoryFile:' + args.join(':'));
+      this.nativeTts_.postMessage('addMemoryFile:' + args.join(':'));
     }
   }
 
-  this.nativeTts.postMessage('startService:' + chunkSize);
+  this.nativeTts_.postMessage('startService:' + chunkSize);
 };
 
+/**
+ * Loads the nacl compiled tts engine
+ * @private
+ */
+TtsController.prototype.createNativeTts_ = function() {
+  var embed = document.createElement('embed');
+  embed.setAttribute('id', 'tts' + this.voiceType_);
+  embed.setAttribute('name', 'nacl_module');
+  embed.setAttribute('src', 'tts_service.nmf');
+  embed.setAttribute('type', 'application/x-nacl');
+  embed.addEventListener('load', this.load.bind(this), false);
+  document.body.appendChild(embed);
+  this.nativeTts_ = embed;
+
+  // Native Client appears to be buggy and only starts load if any property gets
+  // accessed. Do that now by checking for lastError.
+  if (embed.lastError)
+    console.error('Error while loading native module: ' + embed.lastError);
+};
+
+/**
+ * Clears any pending timeouts we may have.
+ * @private
+ */
+TtsController.prototype.clearTimeouts_ = function() {
+  for (var i = 0; i < this.timeouts_.length; i++) {
+    window.clearTimeout(this.timeouts_[i]);
+  }
+  this.timeouts_.length = 0;
+};
+
+/**
+ * Simple routine to escape a string. We send a ':'-separated
+ * list of parameters to the engine, so we only need to escape ':' and '\'.
+ *
+ * @private
+ * @param {string} str The string to encode
+ * @return {string} The input string replacing '\' -> '\\' and  ':' -> '\:'
+ */
+TtsController.prototype.escapePluginArg_ = function(str) {
+  return str.replace(/\\/g, '\\\\').replace(/:/g, '\\:');
+};
+
+/**
+ * Called when the client requests tts to stop, sends the
+ * message to the engine.
+ */
+TtsController.prototype.onStop = function() {
+  if (!this.initialized_) {
+    return;
+  }
+
+  this.nativeTts_.postMessage('stop');
+};
+
+/**
+ * Called on page unload to clean up.
+ */
 TtsController.prototype.unload = function() {
-  this.nativeTts.postMessage('stopService');
+  this.nativeTts_.postMessage('stopService');
 };
 
-TtsController.prototype.clearIdleTimeout = function() {
-  if (this.idleTimeout) {
-    window.clearTimeout(this.idleTimeout);
+/**
+ * Query if we are ready to speak.
+ *
+ * @return {bool} indicating if loading datafiles is finished.
+ */
+TtsController.prototype.isInitialized = function() {
+  return this.initialized_;
+};
+
+/**
+ * Cancels the timeout to close the audio channel after 30 seconds
+ * of inactivity.
+ * @private
+ */
+TtsController.prototype.clearIdleTimeout_ = function() {
+  if (this.idleTimeout_) {
+    window.clearTimeout(this.idleTimeout_);
   }
 };
 
-TtsController.prototype.setIdleTimeout = function() {
-  // Close the audio channel after 30 seconds of inactivity.
-  this.clearIdleTimeout();
-  this.idleTimeout = window.setTimeout((function() {
-    if (this.nativeTts && this.initialized) {
-      console.log('Closing audio channel after 30 seconds of idle.');
-      this.nativeTts.postMessage('closeAudioChannel');
+/**
+ * Setups a timeout to close the close the audio channel after 30 seconds
+ * of inactivity.
+ * @private
+ */
+TtsController.prototype.setIdleTimeout_ = function() {
+  this.clearIdleTimeout_();
+  this.idleTimeout_ = window.setTimeout((function() {
+    if (this.nativeTts_ && this.initialized_) {
+      console.log('Closing audio channel after ' +
+        (this.AUDIO_CHANNEL_TIMEOUT_IN_MILLISECONDS_ / 1000) +
+        ' seconds of idle.');
+      this.nativeTts_.postMessage('closeAudioChannel');
     }
-    this.idleTimeout = null;
-  }).bind(this), 30000);
+    this.idleTimeout_ = null;
+  }).bind(this), this.AUDIO_CHANNEL_TIMEOUT_IN_MILLISECONDS_);
 };
