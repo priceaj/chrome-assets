@@ -145,7 +145,7 @@ render_images() {
     # Some legacy scripts may create a broken TTY1 so we want to delete that if
     # it is not a character device.
     if [ -c "${pts}" -a ! -c /dev/tty1 ]; then
-      rm /dev/tty1
+      rm -f /dev/tty1
       ln -sf "${pts}" /dev/tty1
     fi
   else
