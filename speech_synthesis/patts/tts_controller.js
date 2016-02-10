@@ -48,6 +48,35 @@ var TtsController = function(voiceType, delegate, defaultLanguage) {
   this.voiceName_ = '';
   this.getDefaultVoice_();
   this.AUDIO_CHANNEL_TIMEOUT_IN_MILLISECONDS_ = 30000;
+
+  /**
+   * When chunking the incoming utterance into smaller pieces to send
+   * to the engine at a time, this contains the remaining text to be
+   * spoken after the current chunk finishes.
+   * @type {string|null}
+   */
+  this.remainingUtteranceText_ = null;
+
+  /**
+   * The character offset of the next chunk.
+   * @type {number}
+   */
+  this.nextCharOffset_ = 0;
+
+  /**
+   * The character offset of the current chunk.
+   * @type {number}
+   */
+  this.chunkCharOffset_ = 0;
+
+  /**
+   * Maximum number of characters to try to send to the engine
+   * for speaking at one time. When given a longer utterance,
+   * try to break on a sentence boundary.
+   * @type {number}
+   * @const
+   */
+  this.MAXIMUM_CHUNK_LEN = 512;
 };
 
 /**
@@ -81,17 +110,84 @@ TtsController.prototype.onSpeak = function(utterance, options, utteranceId) {
   this.nativeTts_.postMessage('stop');
 
   this.utterance_ = utterance;
+  this.utteranceId_ = utteranceId;
+  this.rate_ = options.rate || 1.0;
+  this.pitch_ = options.pitch || 1.0;
+  this.volume_ = options.volume || 1.0;
+  this.remainingUtteranceText_ = utterance;
+  this.nextCharOffset_ = 0;
+  this.chunkCharOffset_ = 0;
 
-  var escapedUtterance = this.escapePluginArg_(utterance);
+  this.speakNextChunk_();
+};
 
-  var rate = options.rate || 1.0;
-  var pitch = options.pitch || 1.0;
-  var volume = options.volume || 1.0;
+/**
+ * Pull some more text from |this.remainingUtteranceText_| and speak it.
+ */
+TtsController.prototype.speakNextChunk_ = function() {
+  this.clearTimeouts_();
+  var chunk = this.getNextChunk_();
+  var escapedChunk = this.escapePluginArg_(chunk);
+  this.chunkCharOffset_ = this.nextCharOffset_;
+  this.nextCharOffset_ += chunk.length;
 
-  var tokens = ['speak', rate, pitch, volume,
-                utteranceId, escapedUtterance];
+  var tokens = ['speak', this.rate_, this.pitch_, this.volume_,
+                this.utteranceId_, escapedChunk];
   this.nativeTts_.postMessage(tokens.join(':'));
   console.log('Plug-in args are ' + tokens.join(':'));
+};
+
+/**
+ * Split the largest possible chunk from |this.remainingUtteranceText_|
+ * possible, trying to end on the last sentence boundary (period, exclamation,
+ * or question mark followed by space), other punctuation boundary (comma,
+ * semicolon, etc. followed by space), or whitespace boundary.
+ * Return that chunk, and remove those characters from
+ * |this.remainingUtteranceText_|.
+ */
+TtsController.prototype.getNextChunk_ = function() {
+  var text = this.remainingUtteranceText_;
+  var len = text.length;
+
+  // If the utterance is less than the maximum chunk length already,
+  // just return it.
+  if (len < this.MAXIMUM_CHUNK_LEN) {
+    this.remainingUtteranceText_ = null;
+    return text;
+  }
+
+  // Scan through the characters in the utterance and keep track of the
+  // last sentence end, last other punctuation followed by whitespace, and
+  // last whitespace - we'll try to break the utterance in that order.
+  var lastSentenceEnd = 0;
+  var lastOtherPunctuation = 0;
+  var lastWhitespace = 0;
+  for (var i = 1; i < this.MAXIMUM_CHUNK_LEN; i++) {
+    var prev = text[i - 1];
+    var ch = text[i];
+    if (!/\s/.test(ch))
+      continue;
+    lastWhitespace = i + 1;
+    if (/[,:;()_-]/.test(prev)) {
+      lastOtherPunctuation = i + 1;
+    }
+    if (/[\.\!\?]/.test(prev)) {
+      lastSentenceEnd = i + 1;
+    }
+  }
+
+  var chunkLen = this.MAXIMUM_CHUNK_LEN;
+  if (lastSentenceEnd) {
+    chunkLen = lastSentenceEnd;
+  } else if (lastOtherPunctuation) {
+    chunkLen = lastOtherPunctuation;
+  } else if (lastWhitespace) {
+    chunkLen = lastWhitespace;
+  }
+
+  var chunk = text.substr(0, chunkLen);
+  this.remainingUtteranceText_ = text.substr(chunkLen);
+  return chunk;
 };
 
 /**
@@ -227,7 +323,11 @@ TtsController.prototype.handleMessage = function(messageEvent) {
   if (data.substr(0, 4) == 'end:') {
     var id = data.substr(4);
     console.log('Got end event for utterance: ' + id);
-    this.sendResponse_(id, 'end');
+    if (this.remainingUtteranceText_ !== null) {
+      this.speakNextChunk_();
+    } else {
+      this.sendResponse_(id, 'end');
+    }
   } else if (data == 'error') {
     console.log('error');
   } else if (data == 'idle' && !this.initialized_) {
@@ -259,16 +359,19 @@ TtsController.prototype.handleTtsEvent_ = function(id, deltaTimeSec,
                                                    charIndex) {
   if (deltaTimeSec == 0.0 && charIndex == 0) {
     this.startTimeMillis_ = new Date();
-    this.sendResponse_(id, 'start');
+    if (this.chunkCharOffset_ == 0)
+      this.sendResponse_(id, 'start');
     return;
   }
 
   var currentTimeMillis = (new Date() - this.startTimeMillis_);
   if (currentTimeMillis > 1000 * deltaTimeSec) {
-    this.sendResponse_(id, 'word', charIndex);
+    this.sendResponse_(id, 'word',
+                       charIndex + 1 + this.chunkCharOffset_);
   } else {
     var timeoutId = window.setTimeout((function() {
-      this.sendResponse_(id, 'word', charIndex);
+      this.sendResponse_(id, 'word',
+                         charIndex + 1 + this.chunkCharOffset_);
     }).bind(this), 1000 * deltaTimeSec - currentTimeMillis);
     this.timeouts_.push(timeoutId);
   }
@@ -405,6 +508,8 @@ TtsController.prototype.onStop = function() {
     return;
   }
 
+  this.clearTimeouts_();
+  this.remainingUtteranceText_ = null;
   this.nativeTts_.postMessage('stop');
 };
 
