@@ -541,7 +541,7 @@ TtsController.prototype.clearIdleTimeout_ = function() {
 };
 
 /**
- * Setups a timeout to close the close the audio channel after 30 seconds
+ * Sets up a timeout to close the audio channel after 30 seconds
  * of inactivity.
  * @private
  */
