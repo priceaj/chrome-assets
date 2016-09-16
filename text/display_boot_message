@@ -127,6 +127,7 @@ render_images() {
     local params="--dev-mode \
       --clear 0x${IMAGE_BACKGROUND_RGB} \
       --frame-interval 0 \
+      --scale=0 \
       ${ASSETS_IMAGE_PATH}/boot_message.png \
       ${image_file}"
 
