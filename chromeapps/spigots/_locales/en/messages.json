@@ -169,6 +169,9 @@
   "errorMissingVPNServerCA": {
     "message": "VPN $1 specifies authentication using certificates, but is missing Server CA."
   },
+  "errorDepreciatedVPNServerCAref": {
+    "message": "VPN $1 specifies depreciated ServerCAref parameter."
+  },
   "errorMissingPassphrase": {
     "description": "This is displayed when an ONC file is being loaded, and it's encrypted, but the user didn't specify a passphrase.",
     "message": "Missing passphrase for encrypted ONC file."

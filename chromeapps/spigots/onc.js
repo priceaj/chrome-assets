@@ -259,7 +259,9 @@ onc.validateClientCert = function(outer, index, oncData, result) {
         !(pattern.EnrollmentURI instanceof Array)) {
       result.errors.push(['errorBadCertificatePattern', network.Name]);
     }
-  } else {
+  } 
+    else if (outer.ClientCertType == 'None' && network.VPN.Type == "OpenVPN") {}
+    else {
     result.errors.push(['errorLoadRequiredObjectMissing', 'ClientCertType']);
   }
   return result;
@@ -752,15 +754,35 @@ onc.validateVpnUserCredentials = function(container, index,
  */
 onc.validateVpnCerts = function(container, index, oncData, result) {
   var netConfig = oncData.NetworkConfigurations[index];
-  if (!('ServerCARef' in container))
+  if (!(('ServerCARef' in container) || ('ServerCARefs' in container)))
     result.errors.push(['errorMissingVPNServerCA', netConfig.Name]);
-  else if (onc.findCert(container.ServerCARef, oncData) < 0) {
-    result.errors.push(['errorBadCertReference',
-                        netConfig.Name, 'ServerCARef',
-                        container.ServerCARef]);
+  else if (('ServerCARef' in container) && ('ServerCARefs' in container))
+    result.errors.push(['errorDepreciatedVPNServerCAref', netConfig.Name]);  
+  else if ('ServerCARef' in container)
+    onc.validateServerCACert(container.ServerCARef, index, oncData, result);  
+  else if ('ServerCARefs' in container)
+  {     
+    for (var i = 0; i < container.ServerCARefs.length; ++i) {
+       onc.validateServerCACert(container.ServerCARefs[i], index, oncData, result);
+    } 
   }
+    
   onc.validateClientCert(container, index, oncData, result);
 };
+
+/**
+ * Validate Server CA refs.
+ */
+
+onc.validateServerCACert = function(ServerCARef, index, oncData, result){
+ var netConfig = oncData.NetworkConfigurations[index];
+ if (onc.findCert(ServerCARef, oncData) < 0) {
+    result.errors.push(['errorBadCertReference',
+                        netConfig.Name, 'ServerCARef',
+                        ServerCARef]);
+    return result;
+}};
+
  /**
  * Validate a VPN NetworkConfiguration ONC object.
  * @param {Integer} index  Index into NetworkConfiguration ONC object.
